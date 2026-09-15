@@ -52,7 +52,7 @@ if app_mode == "Single Listing & SEO Generator":
                     5. 📄 AMAZON A+ CONTENT (EBC) LAYOUT SUGGESTION
                     """
                     
-                    model = genai.GenerativeModel('gemini-2.5-flash')
+                    model = genai.GenerativeModel('gemini-pro')
                     response = model.generate_content([prompt, image])
                     
                     st.success("Elite Listing Generated Successfully!")
