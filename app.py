@@ -1,16 +1,17 @@
 import streamlit as st
 from PIL import Image
 import google.generativeai as genai
-import os
 
-# Streamlit Page Config
 st.set_page_config(page_title="E-commerce SEO Generator", layout="wide")
 
 st.title("🛍️ E-commerce Saree & Shirt SEO Generator")
 st.write("Upload a garment image to generate high-converting, platform-specific SEO content for Amazon, Flipkart, and Meesho.")
 
-# API Key Input (Or use st.secrets)
-gemini_api_key = st.text_input("Enter your Gemini API Key", type="password")
+# Automatically fetch API key from Streamlit Secrets
+if "GEMINI_API_KEY" in st.secrets:
+    gemini_api_key = st.secrets["GEMINI_API_KEY"]
+else:
+    gemini_api_key = st.text_input("Enter your Gemini API Key", type="password")
 
 uploaded_file = st.file_uploader("Upload Garment Image (Saree/Shirt)", type=["jpg", "jpeg", "png"])
 user_caption = st.text_input("Additional Notes (e.g., Kanjivaram silk, pure cotton, festive wear):", "")
@@ -18,7 +19,6 @@ user_caption = st.text_input("Additional Notes (e.g., Kanjivaram silk, pure cott
 if uploaded_file is not None and gemini_api_key:
     genai.configure(api_key=gemini_api_key)
     
-    # Display Image
     image = Image.open(uploaded_file)
     st.image(image, caption="Uploaded Garment", width=300)
     
@@ -64,4 +64,4 @@ if uploaded_file is not None and gemini_api_key:
             except Exception as e:
                 st.error(f"An error occurred: {e}")
 elif not gemini_api_key and uploaded_file:
-    st.warning("Please enter your Gemini API key above to proceed.")
+    st.warning("Please configure your Gemini API key in Streamlit Secrets or enter it above.")
