@@ -15,7 +15,7 @@ gemini_api_key = st.text_input("Enter your Gemini API Key", type="password")
 uploaded_file = st.file_uploader("Upload Garment Image (Saree/Shirt)", type=["jpg", "jpeg", "png"])
 user_caption = st.text_input("Additional Notes (e.g., Kanjivaram silk, pure cotton, festive wear):", "")
 
-if uploaded_file is not-None and gemini_api_key:
+if uploaded_file is not None and gemini_api_key:
     genai.configure(api_key=gemini_api_key)
     
     # Display Image
