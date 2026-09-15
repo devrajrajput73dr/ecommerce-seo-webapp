@@ -80,7 +80,7 @@ if app_mode == "Single Listing & SEO Generator":
                     - Module 2 (Feature Grid / Comparison Table Data): [Key specifications comparison]
                     """
                     
-                    model = genai.GenerativeModel('gemini-1.5-flash')
+                    model = genai.GenerativeModel('gemini-2.5-flash')
                     response = model.generate_content([prompt, image])
                     
                     st.success("Elite Listing Generated Successfully!")
