@@ -20,7 +20,7 @@ if not gemini_api_key:
 # Function to get working model dynamically
 def get_working_model(is_image=False):
     genai.configure(api_key=gemini_api_key)
-    model_candidates = ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-pro']
+    model_candidates = ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-pro']
     for m_name in model_candidates:
         try:
             m = genai.GenerativeModel(m_name)
