@@ -94,26 +94,31 @@ if app_mode == "Single Listing & SEO Generator":
 # ==========================================
 elif app_mode == "Bulk CSV Catalog Generator":
     st.title("📦 Bulk Catalog SEO CSV Generator")
-    st.write("Generate bulk SEO titles, bullet points, and keywords for multiple product descriptions or export them directly for marketplace inventory uploads.")
+    st.write("Generate comprehensive SEO titles, all 5 bullet points, full descriptions, and keywords for multiple products.")
 
-    product_names_input = st.text_area("Enter Product Names/Types (one per line, e.g., Blue Rayon Kurti, Black Cotton Shirt):", 
-                                      "Blue Floral Rayon Shirt\nMaroon Kanjivaram Silk Saree\nWhite Office Wear Cotton Shirt")
+    product_names_input = st.text_area("Enter Product Names/Types (one per line):", 
+                                      "Blue Floral Rayon Shirt\nMaroon Kanjivaram Silk Saree")
     
-    if st.button("🚀 Generate Bulk CSV Data") and gemini_api_key:
-        with st.spinner("Generating bulk SEO catalog data..."):
+    if st.button("🚀 Generate Detailed Bulk SEO") and gemini_api_key:
+        with st.spinner("Generating complete listings with all bullet points and descriptions..."):
             genai.configure(api_key=gemini_api_key)
-            model = genai.GenerativeModel('gemini-2.5-flash')
+            model = genai.GenerativeModel('gemini-1.5-flash')
             
             prompt = f"""
-            Act as an E-commerce Bulk Cataloging Expert. For each product in the following list, generate SEO-optimized data for Amazon and Flipkart in a structured table format with columns: 
-            Product_Name, Amazon_Title, Amazon_Bullet_1, Flipkart_Title, Search_Keywords.
+            Act as an E-commerce Bulk Cataloging Expert. For each product listed below, generate complete and detailed SEO data. 
+            For EACH product, provide:
+            1. Product Name
+            2. Amazon Title
+            3. All 5 Bullet Points (Bullet 1 to Bullet 5)
+            4. Detailed Description
+            5. Flipkart Title & Highlights
+            6. Search Keywords
             
             Products:
             {product_names_input}
             """
             response = model.generate_content(prompt)
             st.markdown(response.text)
-            st.info("💡 You can copy the generated table above or request a direct CSV export format.")
 
 # ==========================================
 # MODE 3: PROFIT MARGIN & COMMISSION CALCULATOR
