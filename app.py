@@ -217,11 +217,11 @@ elif app_mode == "Listing Audit & Optimization Tool":
                 st.error(f"An error occurred during listing audit: {e}")
 
 # ==========================================
-# MODE 5: AI VIRTUAL MODEL STUDIO (DROPDOWN & SINGLE RENDER + DOWNLOAD)
+# MODE 5: AI VIRTUAL MODEL STUDIO (DIRECT HTML URL RENDER)
 # ==========================================
 elif app_mode == "AI Virtual Model Studio":
     st.title("👗 AI Virtual Model & Background Studio")
-    st.write("Upload photos of your garment. Select a background from the dropdown below to generate and download catalog images one by one smoothly.")
+    st.write("Upload photos of your garment. Select a background from the dropdown below to generate catalog images smoothly.")
     
     garment_files = st.file_uploader("Upload Photos of the Garment (Max 3 angles)", type=["jpg", "jpeg", "png"], accept_multiple_files=True, key="single_garment_dropdown")
     
@@ -239,7 +239,6 @@ elif app_mode == "AI Virtual Model Studio":
             with cols[i]:
                 st.image(img, caption=f"Angle {i+1}", use_container_width=True)
                 
-        # Analyze button to process garment description once
         if "core_description" not in st.session_state:
             st.session_state.core_description = None
             
@@ -257,10 +256,9 @@ elif app_mode == "AI Virtual Model Studio":
                 except Exception as e:
                     st.error(f"Analysis error: {e}")
                     
-        # If analysis is done, show dropdown for environments
         if st.session_state.core_description:
             st.markdown("---")
-            st.subheader("🎯 Choose Background & Download")
+            st.subheader("🎯 Choose Background & View")
             
             environments = {
                 "1. E-Commerce White Background Studio": "Professional e-commerce catalog studio photography, 100% pure white background, bright even softbox lighting, sharp focus on garment, high resolution",
@@ -279,8 +277,6 @@ elif app_mode == "AI Virtual Model Studio":
                     try:
                         import urllib.parse
                         import time
-                        import requests
-                        import io
                         
                         env_style = environments[selected_env]
                         final_prompt = f"A hyper-realistic professional fashion model wearing {st.session_state.core_description}. Background setting: {env_style}, commercial fashion photography."
@@ -289,24 +285,11 @@ elif app_mode == "AI Virtual Model Studio":
                         seed_val = int(time.time())
                         image_url = f"https://pollinations.ai/p/{encoded_prompt}?width=768&height=1024&nologo=true&seed={seed_val}"
                         
-                        # Fetch image securely via requests and display with download option
-                        img_response = requests.get(image_url, timeout=40)
-                        if img_response.status_code == 200:
-                            final_img = Image.open(io.BytesIO(img_response.content))
-                            st.image(final_img, caption=selected_env, use_container_width=True)
-                            
-                            # Provide direct download button
-                            buf = io.BytesIO()
-                            final_img.save(buf, format="JPEG")
-                            byte_im = buf.getvalue()
-                            
-                            st.download_button(
-                                label=f"📥 Download {selected_env}",
-                                data=byte_im,
-                                file_name=f"catalog_{selected_env.lower().replace(' ', '_')}.jpg",
-                                mime="image/jpeg"
-                            )
-                        else:
-                            st.error("Failed to generate image from server. Please try clicking again.")
+                        st.success(f"Generated successfully for {selected_env}!")
+                        
+                        # Render securely using HTML image tag
+                        st.markdown(f'<div style="text-align:center;"><img src="{image_url}" width="100%" style="border-radius:10px; margin-bottom:15px;" alt="{selected_env}"></div>', unsafe_allow_html=True)
+                        st.info("💡 Aap is image par right-click karke 'Save image as...' karke easily download kar sakte hain!")
+                        
                     except Exception as gen_err:
                         st.error(f"Error: {gen_err}")
