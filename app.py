@@ -3,6 +3,7 @@ from PIL import Image
 import google.generativeai as genai
 import pandas as pd
 import io
+import requests
 
 st.set_page_config(page_title="E-commerce Elite SEO & Automation Suite", layout="wide")
 
@@ -20,6 +21,12 @@ if "GEMINI_API_KEY" in st.secrets:
     gemini_api_key = st.secrets["GEMINI_API_KEY"]
 else:
     gemini_api_key = st.sidebar.text_input("Enter your Gemini API Key", type="password")
+
+# Hugging Face Token Setup in Sidebar
+if "HUGGINGFACE_API_KEY" in st.secrets:
+    hf_api_key = st.secrets["HUGGINGFACE_API_KEY"]
+else:
+    hf_api_key = st.sidebar.text_input("Enter Hugging Face API Key (Free)", type="password")
 
 if not gemini_api_key:
     st.warning("⚠️ Please configure your Gemini API key in Streamlit Secrets or enter it in the sidebar.")
@@ -41,6 +48,18 @@ def get_working_model(is_image=False):
             elif not is_image:
                 return genai.GenerativeModel(m.name)
     return genai.GenerativeModel('gemini-2.5-flash')
+
+# Function to generate image using Hugging Face Free Inference API
+def generate_hf_image(prompt_text, hf_token):
+    API_URL = "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0"
+    headers = {"Authorization": f"Bearer {hf_token}"}
+    payload = {"inputs": prompt_text}
+    response = requests.post(API_URL, headers=headers, json=payload)
+    if response.status_code == 200:
+        return Image.open(io.BytesIO(response.content))
+    else:
+        st.error(f"HF API Error: {response.text}")
+        return None
 
 # ==========================================
 # MODE 1: SINGLE LISTING & SEO GENERATOR
@@ -197,11 +216,11 @@ elif app_mode == "Listing Audit & Optimization Tool":
                 st.error(f"An error occurred during listing audit: {e}")
 
 # ==========================================
-# MODE 5: AI VIRTUAL MODEL STUDIO
+# MODE 5: AI VIRTUAL MODEL STUDIO (WITH FREE IMAGE GEN)
 # ==========================================
 elif app_mode == "AI Virtual Model Studio":
-    st.title("👗 AI Virtual Model & Try-On Studio")
-    st.write("Upload only your garment photo. AI will automatically generate a professional model wearing your exact garment without altering its design or pattern.")
+    st.title("👗 AI Virtual Model & Catalog Studio")
+    st.write("Upload your garment photo. AI will generate an optimized prompt and directly render the professional model catalog image using Hugging Face Free API.")
     
     garment_file = st.file_uploader("Upload Garment Image (Saree/Shirt)", type=["jpg", "jpeg", "png"], key="auto_vton_garment")
     model_pose = st.selectbox("Select Model Pose / Setting:", [
@@ -214,24 +233,27 @@ elif app_mode == "AI Virtual Model Studio":
         image = Image.open(garment_file)
         st.image(image, caption="Your Uploaded Garment", width=300)
         
-        if st.button("✨ Generate AI Model Try-On Prompt & Strategy"):
-            with st.spinner("Analyzing garment fabric, color, motifs, and generating high-fidelity AI model generation setup..."):
+        if st.button("✨ Generate AI Model Image & Strategy"):
+            with st.spinner("Analyzing garment and generating high-precision image prompt..."):
                 try:
                     prompt = f"""
                     You are an expert AI Fashion Director and Visual Generation Specialist. 
-                    Analyze the uploaded garment image. The user wants to generate a professional e-commerce model image wearing this exact garment in a {model_pose}.
-                    
-                    CRITICAL INSTRUCTIONS:
-                    1. Lock the exact fabric color, print design, embroidery, zari work, and patterns shown in the image. Do NOT alter them in any way.
-                    2. Describe a hyper-realistic professional fashion model wearing this garment.
-                    3. Provide the exact text prompt and parameters that can be used in advanced image generators (like Midjourney, Stable Diffusion, or Imagen) to produce the final catalog image with a 100% pure white or professional studio background.
+                    Analyze the uploaded garment image. Create a detailed English text prompt for Stable Diffusion to generate a professional e-commerce model image wearing this exact garment in a {model_pose} with a 100% pure white background. Keep the exact fabric color, print design, and patterns without alteration. Give only the final image prompt text clearly at the end.
                     """
-                    
                     model = get_working_model(is_image=True)
                     response = model.generate_content([prompt, image])
                     
-                    st.success("AI Model Generation Strategy & Prompt Ready!")
-                    st.markdown(response.text)
+                    generated_prompt_text = response.text
+                    st.success("Prompt Generated Successfully!")
+                    st.markdown(generated_prompt_text)
                     
+                    if hf_api_key:
+                        with st.spinner("Rendering direct catalog image via Hugging Face Free API..."):
+                            final_image = generate_hf_image(generated_prompt_text, hf_api_key)
+                            if final_image:
+                                st.image(final_image, caption="Generated E-commerce Model Catalog", use_column_width=True)
+                    else:
+                        st.info("💡 Enter your free Hugging Face API Key in the sidebar to directly render and view the generated image inside the app!")
+                        
                 except Exception as e:
                     st.error(f"An error occurred: {e}")
