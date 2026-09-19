@@ -218,47 +218,56 @@ elif app_mode == "Listing Audit & Optimization Tool":
                 st.error(f"An error occurred during listing audit: {e}")
 
 # ==========================================
-# MODE 5: AI VIRTUAL MODEL STUDIO (WITH FREE IMAGE GEN)
+# MODE 5: AI VIRTUAL MODEL STUDIO (7 BACKGROUNDS GEN)
 # ==========================================
 elif app_mode == "AI Virtual Model Studio":
-    st.title("👗 AI Virtual Model & Catalog Studio")
-    st.write("Upload your garment photo. AI will generate an optimized prompt and directly render the professional model catalog image using Hugging Face Free API.")
+    st.title("👗 AI Virtual Model & Multi-Background Studio")
+    st.write("Upload your garment photo. The app will automatically generate 7 distinct professional backgrounds (Studio, Garden, Home, Heritage, Sunset, Street Runway, and Boutique) using Hugging Face Free API.")
     
     garment_file = st.file_uploader("Upload Garment Image (Saree/Shirt)", type=["jpg", "jpeg", "png"], key="auto_vton_garment")
-    model_pose = st.selectbox("Select Model Pose / Setting:", [
-        "Professional Studio White Background (E-commerce Standard)", 
-        "Outdoor Ethnic Lifestyle Setting (Festive)", 
-        "Modern Urban Indoor Studio"
-    ])
     
     if garment_file is not None and gemini_api_key:
         image = Image.open(garment_file)
         st.image(image, caption="Your Uploaded Garment", width=300)
         
-        if st.button("✨ Generate AI Model Image & Strategy"):
-            with st.spinner("Analyzing garment and generating high-precision image prompt..."):
+        if st.button("✨ Generate 7 Distinct Catalog Images"):
+            with st.spinner("Analyzing garment and preparing 7 background variations..."):
                 try:
-                    prompt = f"""
-                    You are an expert AI Fashion Director and Visual Generation Specialist. 
-                    Analyze the uploaded garment image. Create a short, highly-detailed English text prompt for Stable Diffusion to generate a professional e-commerce model image wearing this exact garment in a {model_pose} with a 100% pure white background. Keep the exact fabric color, print design, and patterns without alteration. Give ONLY the final image prompt text clearly, without extra conversational filler.
-                    """
+                    # Define 7 distinct settings including white studio and 6 varied backgrounds
+                    environments = [
+                        ("1. E-Commerce White Background Studio", "Professional e-commerce catalog studio photography, 100% pure white background, bright even softbox lighting, sharp focus on garment."),
+                        ("2. Lush Green Garden Outdoor", "Outdoor natural lifestyle setting, lush green botanical garden background, soft natural sunlight, cinematic depth of field."),
+                        ("3. Modern Luxury Home Interior", "Modern luxury indoor home living room interior background, elegant warm ambient lighting, elegant interior decor."),
+                        ("4. Traditional Heritage Courtyard", "Traditional Indian heritage courtyard background, ethnic architecture, warm terracotta tones, royal heritage aesthetics."),
+                        ("5. Golden Hour Sunset Outdoor", "Outdoor sunset golden hour setting, warm glowing sunlight flare, urban chic aesthetic background."),
+                        ("6. Modern Fashion Street Runway", "Modern urban city street fashion runway background, stylish architectural backdrop, dynamic street style lighting."),
+                        ("7. Luxury Boutique Interior", "High-end luxury fashion boutique interior background, sophisticated designer racks, elegant warm lighting and premium atmosphere.")
+                    ]
+                    
+                    # First, generate a base prompt using Gemini
+                    base_prompt_query = "Describe a professional female model wearing this exact garment in detail, keeping the exact fabric color, patterns, and design unchanged. Give only the core clothing and model description."
                     model = get_working_model(is_image=True)
-                    response = model.generate_content([prompt, image])
+                    base_response = model.generate_content([base_prompt_query, image])
+                    core_description = base_response.text.strip()
                     
-                    generated_prompt_text = response.text.strip()
-                    st.success("Prompt Generated Successfully!")
-                    st.markdown("### Generated Prompt:")
-                    st.code(generated_prompt_text)
+                    st.success("Base Garment & Model Analysis Complete! Generating 7 variations...")
                     
-                    if hf_api_key:
-                        with st.spinner("Rendering direct catalog image via Hugging Face Free API (This may take 10-20 seconds)..."):
-                            final_image = generate_hf_image(generated_prompt_text, hf_api_key)
-                            if final_image:
-                                st.image(final_image, caption="Generated E-commerce Model Catalog", use_column_width=True)
-                            else:
-                                st.warning("⚠️ Hugging Face free model is currently warming up or busy. Please try clicking the button again in 30 seconds.")
-                    else:
-                        st.info("💡 Please enter your free Hugging Face API Key in the left sidebar to directly render and view the generated image inside the app!")
+                    # Loop through all 7 environments
+                    for env_title, env_style in environments:
+                        st.markdown(f"### 🌟 {env_title}")
+                        final_prompt = f"A hyper-realistic professional fashion model wearing {core_description}. Background setting: {env_style}, high resolution, sharp focus, commercial fashion photography."
                         
+                        st.code(final_prompt)
+                        
+                        if hf_api_key:
+                            with st.spinner(f"Rendering {env_title}..."):
+                                final_image = generate_hf_image(final_prompt, hf_api_key)
+                                if final_image:
+                                    st.image(final_image, caption=env_title, use_container_width=True)
+                                else:
+                                    st.warning(f"⚠️ Could not render {env_title} due to high server traffic. Please try again.")
+                        else:
+                            st.info("💡 Please enter your free Hugging Face API Key in the sidebar to render images.")
+                            
                 except Exception as e:
                     st.error(f"An error occurred: {e}")
