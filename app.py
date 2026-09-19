@@ -4,6 +4,7 @@ import google.generativeai as genai
 import pandas as pd
 import io
 import requests
+from huggingface_hub import InferenceClient
 
 st.set_page_config(page_title="E-commerce Elite SEO & Automation Suite", layout="wide")
 
@@ -50,15 +51,16 @@ def get_working_model(is_image=False):
     return genai.GenerativeModel('gemini-2.5-flash')
 
 # Function to generate image using Hugging Face Free Inference API
+from huggingface_hub import InferenceClient
+
+# Function to generate image using Hugging Face Official Client
 def generate_hf_image(prompt_text, hf_token):
-    API_URL = "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0"
-    headers = {"Authorization": f"Bearer {hf_token}"}
-    payload = {"inputs": prompt_text}
-    response = requests.post(API_URL, headers=headers, json=payload)
-    if response.status_code == 200:
-        return Image.open(io.BytesIO(response.content))
-    else:
-        st.error(f"HF API Error: {response.text}")
+    try:
+        client = InferenceClient("stabilityai/stable-diffusion-xl-base-1.0", token=hf_token)
+        image = client.text_to_image(prompt_text)
+        return image
+    except Exception as e:
+        st.error(f"Hugging Face API Error: {e}")
         return None
 
 # ==========================================
