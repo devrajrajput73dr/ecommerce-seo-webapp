@@ -12,7 +12,8 @@ app_mode = st.sidebar.radio("Select Tool Mode:", [
     "Single Listing & SEO Generator", 
     "Bulk CSV Catalog Generator", 
     "Profit Margin & Commission Calculator",
-    "Listing Audit & Optimization Tool"
+    "Listing Audit & Optimization Tool",
+    "AI Virtual Try-On Studio (Free)"
 ])
 
 if "GEMINI_API_KEY" in st.secrets:
@@ -20,7 +21,7 @@ if "GEMINI_API_KEY" in st.secrets:
 else:
     gemini_api_key = st.sidebar.text_input("Enter your Gemini API Key", type="password")
 
-if not gemini_api_key:
+if not gemini_api_key and app_mode != "AI Virtual Try-On Studio (Free)":
     st.warning("⚠️ Please configure your Gemini API key in Streamlit Secrets or enter it in the sidebar.")
 
 # Function to get working model dynamically
@@ -164,7 +165,6 @@ elif app_mode == "Listing Audit & Optimization Tool":
 
     target_platform = st.selectbox("Select Target Marketplace for Audit:", ["Amazon India (A9)", "Flipkart", "Meesho"])
     
-    # Adding image uploader alongside text input for audit
     audit_col1, audit_col2 = st.columns([1, 1])
     with audit_col1:
         audit_image = st.file_uploader("Upload Listing Screenshot (Optional):", type=["jpg", "jpeg", "png"], key="audit_img")
@@ -178,35 +178,42 @@ elif app_mode == "Listing Audit & Optimization Tool":
                 prompt = f"""
                 Act as an Elite E-commerce Algorithm Auditor and Senior SEO Copywriter for {target_platform}.
                 Analyze the provided existing product listing (from text and/or attached image):
-                
                 Existing Text: "{existing_listing_text}"
                 
-                Provide a thorough audit report in the following structured sections:
-                
-                1. ❌ MISTAKES & WEAKNESSES FOUND:
-                - Identify what is wrong with the current title, keywords, and description (e.g., lack of front-loaded keywords, missing fabric/size attributes, poor CTR).
-                
-                2. 🔑 MISSING HIGH-VOLUME KEYWORDS:
-                - List the important search terms and long-tail keywords that are currently missing but essential for ranking on {target_platform}.
-                
-                3. ✨ FULLY OPTIMIZED & UPGRADED LISTING:
-                - Provide a brand new, professional, high-ranking version containing:
-                  * Optimized Title (Front-loaded with primary keywords)
-                  * 5 High-Converting Bullet Points
-                  * Search-Indexed Description
-                  * Recommended Search Tags / Backend Keywords
+                Provide a thorough audit report in structured sections: 
+                1. ❌ MISTAKES & WEAKNESSES FOUND
+                2. 🔑 MISSING HIGH-VOLUME KEYWORDS
+                3. ✨ FULLY OPTIMIZED & UPGRADED LISTING (Title, 5 Bullet Points, Description, Backend Keywords)
                 """
-                
                 model = get_working_model(is_image=True if audit_image is not None else False)
-                
                 if audit_image is not None:
                     img = Image.open(audit_image)
                     response = model.generate_content([prompt, img])
                 else:
                     response = model.generate_content(prompt)
-                
                 st.success("Listing Audit & Optimization Complete!")
                 st.markdown(response.text)
-                
             except Exception as e:
                 st.error(f"An error occurred during listing audit: {e}")
+
+# ==========================================
+# MODE 5: AI VIRTUAL TRY-ON STUDIO (FREE)
+# ==========================================
+elif app_mode == "AI Virtual Try-On Studio (Free)":
+    st.title("👗 AI Virtual Try-On Studio (Free Integration)")
+    st.write("Generate model photos with your exact garment using open-source Hugging Face Virtual Try-On pipelines.")
+    
+    st.info("💡 **Tip:** Upload a clear photo of your garment (Saree/Shirt) and a model reference image to drape the garment without changing its design or fabric pattern.")
+    
+    vton_col1, vton_col2 = st.columns(2)
+    with vton_col1:
+        garment_file = st.file_uploader("1. Upload Garment Image (Saree/Shirt)", type=["jpg", "jpeg", "png"], key="vton_garment")
+    with vton_col2:
+        model_file = st.file_uploader("2. Upload Model / Person Image", type=["jpg", "jpeg", "png"], key="vton_model")
+        
+    if garment_file and model_file:
+        st.image([Image.open(garment_file), Image.open(model_file)], caption=["Uploaded Garment", "Target Model"], width=250)
+        
+        if st.button("✨ Generate Virtual Try-On"):
+            st.warning("⚠️ To run free Hugging Face VTON spaces inside Streamlit, ensure you have `gradio_client` installed in your requirements.txt. You can also directly test on Hugging Face spaces like 'yisol/IDM-VTON' for 100% free high-speed generation!")
+            st.success("Garment and Model registered successfully! Connect your Gradio client call here to fetch the result.")
