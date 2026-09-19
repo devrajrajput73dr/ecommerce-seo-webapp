@@ -238,22 +238,25 @@ elif app_mode == "AI Virtual Model Studio":
                 try:
                     prompt = f"""
                     You are an expert AI Fashion Director and Visual Generation Specialist. 
-                    Analyze the uploaded garment image. Create a detailed English text prompt for Stable Diffusion to generate a professional e-commerce model image wearing this exact garment in a {model_pose} with a 100% pure white background. Keep the exact fabric color, print design, and patterns without alteration. Give only the final image prompt text clearly at the end.
+                    Analyze the uploaded garment image. Create a short, highly-detailed English text prompt for Stable Diffusion to generate a professional e-commerce model image wearing this exact garment in a {model_pose} with a 100% pure white background. Keep the exact fabric color, print design, and patterns without alteration. Give ONLY the final image prompt text clearly, without extra conversational filler.
                     """
                     model = get_working_model(is_image=True)
                     response = model.generate_content([prompt, image])
                     
-                    generated_prompt_text = response.text
+                    generated_prompt_text = response.text.strip()
                     st.success("Prompt Generated Successfully!")
-                    st.markdown(generated_prompt_text)
+                    st.markdown("### Generated Prompt:")
+                    st.code(generated_prompt_text)
                     
                     if hf_api_key:
-                        with st.spinner("Rendering direct catalog image via Hugging Face Free API..."):
+                        with st.spinner("Rendering direct catalog image via Hugging Face Free API (This may take 10-20 seconds)..."):
                             final_image = generate_hf_image(generated_prompt_text, hf_api_key)
                             if final_image:
                                 st.image(final_image, caption="Generated E-commerce Model Catalog", use_column_width=True)
+                            else:
+                                st.warning("⚠️ Hugging Face free model is currently warming up or busy. Please try clicking the button again in 30 seconds.")
                     else:
-                        st.info("💡 Enter your free Hugging Face API Key in the sidebar to directly render and view the generated image inside the app!")
+                        st.info("💡 Please enter your free Hugging Face API Key in the left sidebar to directly render and view the generated image inside the app!")
                         
                 except Exception as e:
                     st.error(f"An error occurred: {e}")
