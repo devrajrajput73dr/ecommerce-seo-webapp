@@ -13,7 +13,7 @@ app_mode = st.sidebar.radio("Select Tool Mode:", [
     "Bulk CSV Catalog Generator", 
     "Profit Margin & Commission Calculator",
     "Listing Audit & Optimization Tool",
-    "AI Virtual Try-On Studio (Free)"
+    "AI Virtual Model Studio"
 ])
 
 if "GEMINI_API_KEY" in st.secrets:
@@ -21,7 +21,7 @@ if "GEMINI_API_KEY" in st.secrets:
 else:
     gemini_api_key = st.sidebar.text_input("Enter your Gemini API Key", type="password")
 
-if not gemini_api_key and app_mode != "AI Virtual Try-On Studio (Free)":
+if not gemini_api_key:
     st.warning("⚠️ Please configure your Gemini API key in Streamlit Secrets or enter it in the sidebar.")
 
 # Function to get working model dynamically
@@ -197,9 +197,9 @@ elif app_mode == "Listing Audit & Optimization Tool":
                 st.error(f"An error occurred during listing audit: {e}")
 
 # ==========================================
-# MODE 5: AI VIRTUAL MODEL STUDIO (NO MODEL IMAGE NEEDED)
+# MODE 5: AI VIRTUAL MODEL STUDIO
 # ==========================================
-elif app_mode == "AI Virtual Try-On Studio (Free)":
+elif app_mode == "AI Virtual Model Studio":
     st.title("👗 AI Virtual Model & Try-On Studio")
     st.write("Upload only your garment photo. AI will automatically generate a professional model wearing your exact garment without altering its design or pattern.")
     
@@ -210,7 +210,7 @@ elif app_mode == "AI Virtual Try-On Studio (Free)":
         "Modern Urban Indoor Studio"
     ])
     
-    if garment_file is not None and gemini_api_key:
+    if garment_file is not None and gemini_api_Key if 'gemini_api_key' in locals() else gemini_api_key:
         image = Image.open(garment_file)
         st.image(image, caption="Your Uploaded Garment", width=300)
         
@@ -234,4 +234,4 @@ elif app_mode == "AI Virtual Try-On Studio (Free)":
                     st.markdown(response.text)
                     
                 except Exception as e:
-                    st.error(f"An error occurred: {e}")ere to fetch the result.")
+                    st.error(f"An error occurred: {e}")
