@@ -160,20 +160,26 @@ elif app_mode == "Profit Margin & Commission Calculator":
 # ==========================================
 elif app_mode == "Listing Audit & Optimization Tool":
     st.title("🔍 Existing Listing Audit & SEO Optimizer")
-    st.write("Paste your current live product listing (Title, Bullet points, or Description) to find mistakes, missing keywords, and get an upgraded high-ranking version.")
+    st.write("Upload a screenshot of your live listing or paste its text below to find mistakes, missing keywords, and get an upgraded high-ranking version.")
 
     target_platform = st.selectbox("Select Target Marketplace for Audit:", ["Amazon India (A9)", "Flipkart", "Meesho"])
-    existing_listing_text = st.text_area("Paste your existing product listing text here:", 
-                                        "Men's Casual Shirt\nNice cotton shirt for men. Comfortable wear.\nColor: Blue")
+    
+    # Adding image uploader alongside text input for audit
+    audit_col1, audit_col2 = st.columns([1, 1])
+    with audit_col1:
+        audit_image = st.file_uploader("Upload Listing Screenshot (Optional):", type=["jpg", "jpeg", "png"], key="audit_img")
+    with audit_col2:
+        existing_listing_text = st.text_area("Or Paste existing product listing text here:", 
+                                            "Men's Casual Shirt\nNice cotton shirt for men. Comfortable wear.\nColor: Blue")
 
     if st.button("🔎 Audit & Upgrade Listing") and gemini_api_key:
         with st.spinner("Analyzing listing mistakes, keyword gaps, and generating optimized version..."):
             try:
                 prompt = f"""
                 Act as an Elite E-commerce Algorithm Auditor and Senior SEO Copywriter for {target_platform}.
-                Analyze the following existing product listing text provided by the seller:
+                Analyze the provided existing product listing (from text and/or attached image):
                 
-                "{existing_listing_text}"
+                Existing Text: "{existing_listing_text}"
                 
                 Provide a thorough audit report in the following structured sections:
                 
@@ -191,8 +197,13 @@ elif app_mode == "Listing Audit & Optimization Tool":
                   * Recommended Search Tags / Backend Keywords
                 """
                 
-                model = get_working_model(is_image=False)
-                response = model.generate_content(prompt)
+                model = get_working_model(is_image=True if audit_image is not None else False)
+                
+                if audit_image is not None:
+                    img = Image.open(audit_image)
+                    response = model.generate_content([prompt, img])
+                else:
+                    response = model.generate_content(prompt)
                 
                 st.success("Listing Audit & Optimization Complete!")
                 st.markdown(response.text)
