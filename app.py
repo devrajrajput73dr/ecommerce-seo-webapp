@@ -22,9 +22,6 @@ if "GEMINI_API_KEY" in st.secrets:
 else:
     gemini_api_key = st.sidebar.text_input("Enter your Gemini API Key", type="password")
 
-# Hugging Face Token Setup in Sidebar
-if "HUGGINGFACE_API_KEY" in st.secrets:
-    hf_api_key = st.secrets["HUGGINGFACE_API_KEY"]
 else:
     hf_api_key = st.sidebar.text_input("Enter Hugging Face API Key (Free)", type="password")
 
@@ -289,6 +286,9 @@ elif app_mode == "AI Virtual Model Studio":
                     target_url = f"https://pollinations.ai/p/{encoded_prompt}?width=768&height=1024&nologo=true&seed={timestamp_seed}"
                     
                     st.success(f"🎉 Catalog generated successfully for {selected_bg}!")
+                    
+                    # Streamlit ka native image renderer use karein
+                    st.image(target_url, caption=selected_bg, use_container_width=True)
                     
                     # Display using native markdown iframe/image container to prevent any python decoding bugs
                     st.markdown(
