@@ -217,20 +217,20 @@ elif app_mode == "Listing Audit & Optimization Tool":
                 st.error(f"An error occurred during listing audit: {e}")
 
 # ==========================================
-# MODE 5: AI VIRTUAL MODEL STUDIO (ST.IMAGE FIX)
+# MODE 5: AI VIRTUAL MODEL STUDIO (DROPDOWN & SINGLE RENDER + DOWNLOAD)
 # ==========================================
 elif app_mode == "AI Virtual Model Studio":
-    st.title("👗 AI Virtual Model & Multi-Background Studio")
-    st.write("Upload 1-3 photos of the same garment. AI will analyze them and generate 7 distinct professional backgrounds completely free.")
+    st.title("👗 AI Virtual Model & Background Studio")
+    st.write("Upload photos of your garment. Select a background from the dropdown below to generate and download catalog images one by one smoothly.")
     
-    garment_files = st.file_uploader("Upload Photos of the Same Garment (Max 3 angles)", type=["jpg", "jpeg", "png"], accept_multiple_files=True, key="single_garment_multi_angles")
+    garment_files = st.file_uploader("Upload Photos of the Garment (Max 3 angles)", type=["jpg", "jpeg", "png"], accept_multiple_files=True, key="single_garment_dropdown")
     
     if garment_files and gemini_api_key:
         if len(garment_files) > 3:
             st.warning("⚠️ Please upload a maximum of 3 photos.")
             garment_files = garment_files[:3]
             
-        st.markdown("### 📸 Uploaded Garment Angles:")
+        st.markdown("### 📸 Uploaded Garment:")
         cols = st.columns(len(garment_files))
         opened_images = []
         for i, file in enumerate(garment_files):
@@ -239,44 +239,74 @@ elif app_mode == "AI Virtual Model Studio":
             with cols[i]:
                 st.image(img, caption=f"Angle {i+1}", use_container_width=True)
                 
-        if st.button("✨ Generate 7 Professional Catalog Images"):
-            with st.spinner("Analyzing garment and preparing multi-background variations..."):
+        # Analyze button to process garment description once
+        if "core_description" not in st.session_state:
+            st.session_state.core_description = None
+            
+        if st.button("✨ Analyze Garment for Studio"):
+            with st.spinner("Analyzing garment details with Gemini..."):
                 try:
-                    environments = [
-                        ("1. E-Commerce White Background Studio", "Professional e-commerce catalog studio photography, 100% pure white background, bright even softbox lighting, sharp focus on garment, high resolution"),
-                        ("2. Lush Green Garden Outdoor", "Outdoor natural lifestyle setting, lush green botanical garden background, soft natural sunlight, cinematic depth of field, high resolution"),
-                        ("3. Modern Luxury Home Interior", "Modern luxury indoor home living room interior background, elegant warm ambient lighting, elegant interior decor, high resolution"),
-                        ("4. Traditional Heritage Courtyard", "Traditional Indian heritage courtyard background, ethnic architecture, warm terracotta tones, royal heritage aesthetics, high resolution"),
-                        ("5. Golden Hour Sunset Outdoor", "Outdoor sunset golden hour setting, warm glowing sunlight flare, urban chic aesthetic background, high resolution"),
-                        ("6. Modern Fashion Street Runway", "Modern urban city street fashion runway background, stylish architectural backdrop, dynamic street style lighting, high resolution"),
-                        ("7. Luxury Boutique Interior", "High-end luxury fashion boutique interior background, sophisticated designer racks, elegant warm lighting and premium atmosphere, high resolution")
-                    ]
-                    
                     model = get_working_model(is_image=True)
-                    
                     analysis_prompt = [
                         "Analyze these multiple photos of the same garment. Describe the exact fabric color, print design, borders, motifs, and details comprehensively. Create a detailed description for a professional female model wearing this exact garment.",
                         *opened_images
                     ]
-                    
                     base_response = model.generate_content(analysis_prompt)
-                    core_description = base_response.text.title().strip()
+                    st.session_state.core_description = base_response.text.title().strip()
+                    st.success("Garment Analysis Complete! Now select a background below.")
+                except Exception as e:
+                    st.error(f"Analysis error: {e}")
                     
-                    st.success("Comprehensive Garment Analysis Complete! Rendering 7 catalog variations...")
-                    
-                    import urllib.parse
-                    import time
-                    
-                    for env_title, env_style in environments:
-                        st.markdown(f"### 🌟 {env_title}")
-                        final_prompt = f"A hyper-realistic professional fashion model wearing {core_description}. Background setting: {env_style}, commercial fashion photography."
+        # If analysis is done, show dropdown for environments
+        if st.session_state.core_description:
+            st.markdown("---")
+            st.subheader("🎯 Choose Background & Download")
+            
+            environments = {
+                "1. E-Commerce White Background Studio": "Professional e-commerce catalog studio photography, 100% pure white background, bright even softbox lighting, sharp focus on garment, high resolution",
+                "2. Lush Green Garden Outdoor": "Outdoor natural lifestyle setting, lush green botanical garden background, soft natural sunlight, cinematic depth of field, high resolution",
+                "3. Modern Luxury Home Interior": "Modern luxury indoor home living room interior background, elegant warm ambient lighting, elegant interior decor, high resolution",
+                "4. Traditional Heritage Courtyard": "Traditional Indian heritage courtyard background, ethnic architecture, warm terracotta tones, royal heritage aesthetics, high resolution",
+                "5. Golden Hour Sunset Outdoor": "Outdoor sunset golden hour setting, warm glowing sunlight flare, urban chic aesthetic background, high resolution",
+                "6. Modern Fashion Street Runway": "Modern urban city street fashion runway background, stylish architectural backdrop, dynamic street style lighting, high resolution",
+                "7. Luxury Boutique Interior": "High-end luxury fashion boutique interior background, sophisticated designer racks, elegant warm lighting and premium atmosphere, high resolution"
+            }
+            
+            selected_env = st.selectbox("Select Desired Catalog Background:", list(environments.keys()))
+            
+            if st.button(f"🚀 Generate & View: {selected_env}"):
+                with st.spinner(f"Generating {selected_env}..."):
+                    try:
+                        import urllib.parse
+                        import time
+                        import requests
+                        import io
+                        
+                        env_style = environments[selected_env]
+                        final_prompt = f"A hyper-realistic professional fashion model wearing {st.session_state.core_description}. Background setting: {env_style}, commercial fashion photography."
                         
                         encoded_prompt = urllib.parse.quote(final_prompt)
                         seed_val = int(time.time())
                         image_url = f"https://pollinations.ai/p/{encoded_prompt}?width=768&height=1024&nologo=true&seed={seed_val}"
                         
-                        # Using built-in st.image for reliable rendering
-                        st.image(image_url, caption=env_title, use_container_width=True)
+                        # Fetch image securely via requests and display with download option
+                        img_response = requests.get(image_url, timeout=40)
+                        if img_response.status_code == 200:
+                            final_img = Image.open(io.BytesIO(img_response.content))
+                            st.image(final_img, caption=selected_env, use_container_width=True)
                             
-                except Exception as e:
-                    st.error(f"An error occurred: {e}")
+                            # Provide direct download button
+                            buf = io.BytesIO()
+                            final_img.save(buf, format="JPEG")
+                            byte_im = buf.getvalue()
+                            
+                            st.download_button(
+                                label=f"📥 Download {selected_env}",
+                                data=byte_im,
+                                file_name=f"catalog_{selected_env.lower().replace(' ', '_')}.jpg",
+                                mime="image/jpeg"
+                            )
+                        else:
+                            st.error("Failed to generate image from server. Please try clicking again.")
+                    except Exception as gen_err:
+                        st.error(f"Error: {gen_err}")
