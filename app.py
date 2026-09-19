@@ -210,7 +210,7 @@ elif app_mode == "AI Virtual Model Studio":
         "Modern Urban Indoor Studio"
     ])
     
-    if garment_file is not None and gemini_api_Key if 'gemini_api_key' in locals() else gemini_api_key:
+    if garment_file is not None and gemini_api_key:
         image = Image.open(garment_file)
         st.image(image, caption="Your Uploaded Garment", width=300)
         
