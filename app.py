@@ -8,7 +8,12 @@ st.set_page_config(page_title="E-commerce Elite SEO & Automation Suite", layout=
 
 # Sidebar Configuration & Mode Selection
 st.sidebar.title("🛠️ E-Commerce Suite Navigation")
-app_mode = st.sidebar.radio("Select Tool Mode:", ["Single Listing & SEO Generator", "Bulk CSV Catalog Generator", "Profit Margin & Commission Calculator"])
+app_mode = st.sidebar.radio("Select Tool Mode:", [
+    "Single Listing & SEO Generator", 
+    "Bulk CSV Catalog Generator", 
+    "Profit Margin & Commission Calculator",
+    "Listing Audit & Optimization Tool"
+])
 
 if "GEMINI_API_KEY" in st.secrets:
     gemini_api_key = st.secrets["GEMINI_API_KEY"]
@@ -30,7 +35,7 @@ def get_working_model(is_image=False):
             continue
     for m in genai.list_models():
         if 'generateContent' in m.supported_generation_methods:
-            if is_image and ('vision' in m.name or '1.5' in m.name):
+            if is_image and ('vision' in m.name or '2.5' in m.name):
                 return genai.GenerativeModel(m.name)
             elif not is_image:
                 return genai.GenerativeModel(m.name)
@@ -65,37 +70,15 @@ if app_mode == "Single Listing & SEO Generator":
                     Lock the exact fabric color, design, pattern, and style shown in the image. Do NOT write generic text. 
 
                     Provide the output in the following strictly separated sections with complete details:
-
-                    1. 📊 PRICING & TREND MARGIN STRATEGY:
-                    - Suggested MRP & Competitive Selling Price (Amazon/Flipkart)
-                    - Suggested High-Velocity Selling Price (Meesho)
-                    - Estimated Profit Breakdown after Marketplace commissions and shipping fees based on sourcing cost ₹{sourcing_cost}.
-
-                    2. 🅰️ AMAZON A9 ALGORITHM SEO LISTING:
-                    - High-Velocity Search Title: [Front-load core primary keywords within the first 50 characters]
-                    - High-Converting Bullet Points (Provide all 5 bullet points with clear highlights)
-                    - Search-Indexed Description: [Rich narrative paragraph]
-                    - Backend Search Keywords: [Comma-separated high-volume search phrases]
-
-                    3. 🔵 FLIPKART DISCOVERY OPTIMIZED LISTING:
-                    - Catalog Discovery Title: [Attribute-heavy title for Flipkart]
-                    - Product Highlights / Bullet Points (Provide 5 distinct keyword-rich highlights as bullet points)
-                    - Catalog Description: [Flipkart style descriptive text]
-                    - High-Traffic Search Tags / Keywords: [Top 15 trending discovery tags]
-                    - Search Filters Attributes: [Fabric, Fit, Collar, Sleeves, Pattern, Occasion]
-
-                    4. 🟣 MEESHO TRENDING SEARCH & RESELLER LISTING:
-                    - Reseller Product Title / Name: [Catchy, high-search-intent product name designed to rank on top]
-                    - SEO Description & Margin Selling Points: [Reseller bullet points with ready-to-share WhatsApp hook]
-                    - High-Volume Meesho Search Tags: [Top trending tags dominating Meesho app search]
-
-                    5. 📄 AMAZON A+ CONTENT (EBC) LAYOUT SUGGESTION:
-                    - Module 1 & Module 2 details.
+                    1. 📊 PRICING & TREND MARGIN STRATEGY
+                    2. 🅰️ AMAZON A9 ALGORITHM SEO LISTING (Title, 5 Bullet Points, Description, Backend Keywords)
+                    3. 🔵 FLIPKART DISCOVERY OPTIMIZED LISTING (Catalog Title, Highlights, Description, Search Tags, Attributes)
+                    4. 🟣 MEESHO TRENDING SEARCH & RESELLER LISTING (Reseller Title, Description & WhatsApp Hook, Tags)
+                    5. 📄 AMAZON A+ CONTENT (EBC) LAYOUT SUGGESTION
                     """
                     
                     model = get_working_model(is_image=True)
                     response = model.generate_content([prompt, image])
-                    
                     st.success("Elite Listing Generated Successfully!")
                     st.markdown(response.text)
                     
@@ -116,7 +99,7 @@ elif app_mode == "Bulk CSV Catalog Generator":
         with st.spinner("Generating complete listings and preparing CSV download..."):
             try:
                 prompt = f"""
-                Act as an E-commerce Bulk Cataloging Expert. For each product listed below, generate structured SEO data in a clean format.
+                Act as an E-commerce Bulk Cataloging Expert. For each product listed below, generate structured SEO data in a clean format covering Amazon, Flipkart, and Meesho.
                 Products:
                 {product_names_input}
                 """
@@ -125,7 +108,6 @@ elif app_mode == "Bulk CSV Catalog Generator":
                 
                 st.markdown(response.text)
                 
-                # Creating a downloadable CSV export button for bulk products
                 csv_buffer = io.StringIO()
                 csv_buffer.write(response.text)
                 csv_data = csv_buffer.getvalue().encode('utf-8')
@@ -172,3 +154,48 @@ elif app_mode == "Profit Margin & Commission Calculator":
             "ROI (%)": [f"{(net_amazon/cost)*100:.1f}%", f"{(net_flipkart/cost)*100:.1f}%", f"{(net_meesho/cost)*100:.1f}%"]
         })
         st.table(res_df)
+
+# ==========================================
+# MODE 4: LISTING AUDIT & OPTIMIZATION TOOL
+# ==========================================
+elif app_mode == "Listing Audit & Optimization Tool":
+    st.title("🔍 Existing Listing Audit & SEO Optimizer")
+    st.write("Paste your current live product listing (Title, Bullet points, or Description) to find mistakes, missing keywords, and get an upgraded high-ranking version.")
+
+    target_platform = st.selectbox("Select Target Marketplace for Audit:", ["Amazon India (A9)", "Flipkart", "Meesho"])
+    existing_listing_text = st.text_area("Paste your existing product listing text here:", 
+                                        "Men's Casual Shirt\nNice cotton shirt for men. Comfortable wear.\nColor: Blue")
+
+    if st.button("🔎 Audit & Upgrade Listing") and gemini_api_key:
+        with st.spinner("Analyzing listing mistakes, keyword gaps, and generating optimized version..."):
+            try:
+                prompt = f"""
+                Act as an Elite E-commerce Algorithm Auditor and Senior SEO Copywriter for {target_platform}.
+                Analyze the following existing product listing text provided by the seller:
+                
+                "{existing_listing_text}"
+                
+                Provide a thorough audit report in the following structured sections:
+                
+                1. ❌ MISTAKES & WEAKNESSES FOUND:
+                - Identify what is wrong with the current title, keywords, and description (e.g., lack of front-loaded keywords, missing fabric/size attributes, poor CTR).
+                
+                2. 🔑 MISSING HIGH-VOLUME KEYWORDS:
+                - List the important search terms and long-tail keywords that are currently missing but essential for ranking on {target_platform}.
+                
+                3. ✨ FULLY OPTIMIZED & UPGRADED LISTING:
+                - Provide a brand new, professional, high-ranking version containing:
+                  * Optimized Title (Front-loaded with primary keywords)
+                  * 5 High-Converting Bullet Points
+                  * Search-Indexed Description
+                  * Recommended Search Tags / Backend Keywords
+                """
+                
+                model = get_working_model(is_image=False)
+                response = model.generate_content(prompt)
+                
+                st.success("Listing Audit & Optimization Complete!")
+                st.markdown(response.text)
+                
+            except Exception as e:
+                st.error(f"An error occurred during listing audit: {e}")
