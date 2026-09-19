@@ -217,7 +217,7 @@ elif app_mode == "Listing Audit & Optimization Tool":
                 st.error(f"An error occurred during listing audit: {e}")
 
 # ==========================================
-# MODE 5: AI VIRTUAL MODEL STUDIO (FIXED POLLINATIONS MULTI-BG)
+# MODE 5: AI VIRTUAL MODEL STUDIO (DIRECT POLLINATIONS URL)
 # ==========================================
 elif app_mode == "AI Virtual Model Studio":
     st.title("👗 AI Virtual Model & Multi-Background Studio")
@@ -252,27 +252,19 @@ elif app_mode == "AI Virtual Model Studio":
                     st.success("Base Garment Analysis Complete! Rendering 7 images via Pollinations AI...")
                     
                     import urllib.parse
-                    import io
-                    import requests
+                    import time
                     
-                    # Loop through all 7 environments and fetch images securely via requests
+                    # Loop through all 7 environments and display direct URLs smoothly
                     for env_title, env_style in environments:
                         st.markdown(f"### 🌟 {env_title}")
                         final_prompt = f"A hyper-realistic professional fashion model wearing {core_description}. Background setting: {env_style}, commercial fashion photography."
                         
                         encoded_prompt = urllib.parse.quote(final_prompt)
-                        image_url = f"https://pollinations.ai/p/{encoded_prompt}?width=768&height=1024&nologo=true"
+                        # Adding timestamp seed so browser/streamlit fetches fresh image without caching errors
+                        seed_val = int(time.time())
+                        image_url = f"https://pollinations.ai/p/{encoded_prompt}?width=768&height=1024&nologo=true&seed={seed_val}"
                         
-                        with st.spinner(f"Rendering {env_title}..."):
-                            try:
-                                img_response = requests.get(image_url, timeout=30)
-                                if img_response.status_code == 200:
-                                    rendered_image = Image.open(io.BytesIO(img_response.content))
-                                    st.image(rendered_image, caption=env_title, use_container_width=True)
-                                else:
-                                    st.warning(f"⚠️ Could not load {env_title}. Retrying...")
-                            except Exception as img_err:
-                                st.error(f"Error loading image: {img_err}")
+                        st.image(image_url, caption=env_title, use_container_width=True)
                             
                 except Exception as e:
                     st.error(f"An error occurred: {e}")
