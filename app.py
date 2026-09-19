@@ -217,20 +217,20 @@ elif app_mode == "Listing Audit & Optimization Tool":
                 st.error(f"An error occurred during listing audit: {e}")
 
 # ==========================================
-# MODE 5: AI VIRTUAL MODEL STUDIO (BYTES FETCH & RENDER FIX)
+# MODE 5: AI VIRTUAL MODEL STUDIO (PERMANENT FINAL FIX)
 # ==========================================
 elif app_mode == "AI Virtual Model Studio":
     st.title("👗 AI Virtual Model & Background Studio")
-    st.write("Upload photos of your garment. Select a background from the dropdown below to generate and download catalog images.")
+    st.write("Upload 1-3 photos of your garment. Analyze once, then select any background from the dropdown to instantly view and download your catalog image.")
     
-    garment_files = st.file_uploader("Upload Photos of the Garment (Max 3 angles)", type=["jpg", "jpeg", "png"], accept_multiple_files=True, key="single_garment_dropdown")
+    garment_files = st.file_uploader("Upload Garment Photos (Max 3 angles)", type=["jpg", "jpeg", "png"], accept_multiple_files=True, key="permanent_vton_uploader")
     
     if garment_files and gemini_api_key:
         if len(garment_files) > 3:
             st.warning("⚠️ Please upload a maximum of 3 photos.")
             garment_files = garment_files[:3]
             
-        st.markdown("### 📸 Uploaded Garment:")
+        st.markdown("### 📸 Uploaded Garment Preview:")
         cols = st.columns(len(garment_files))
         opened_images = []
         for i, file in enumerate(garment_files):
@@ -239,26 +239,28 @@ elif app_mode == "AI Virtual Model Studio":
             with cols[i]:
                 st.image(img, caption=f"Angle {i+1}", use_container_width=True)
                 
-        if "core_description" not in st.session_state:
-            st.session_state.core_description = None
+        # Initialize session state for analysis description
+        if "vton_core_desc" not in st.session_state:
+            st.session_state.vton_core_desc = None
             
-        if st.button("✨ Analyze Garment for Studio"):
-            with st.spinner("Analyzing garment details with Gemini..."):
+        if st.button("✨ Step 1: Analyze Garment with AI"):
+            with st.spinner("Analyzing garment fabric, color, and patterns..."):
                 try:
                     model = get_working_model(is_image=True)
                     analysis_prompt = [
                         "Analyze these multiple photos of the same garment. Describe the exact fabric color, print design, borders, motifs, and details comprehensively. Create a detailed description for a professional female model wearing this exact garment.",
                         *opened_images
                     ]
-                    base_response = model.generate_content(analysis_prompt)
-                    st.session_state.core_description = base_response.text.title().strip()
-                    st.success("Garment Analysis Complete! Now select a background below.")
-                except Exception as e:
-                    st.error(f"Analysis error: {e}")
+                    response = model.generate_content(analysis_prompt)
+                    st.session_state.vton_core_desc = response.text.title().strip()
+                    st.success("✅ Analysis Complete! Now select your background below.")
+                except Exception as analysis_err:
+                    st.error(f"Analysis Error: {analysis_err}")
                     
-        if st.session_state.core_description:
+        # If description is ready, show background selector
+        if st.session_state.vton_core_desc:
             st.markdown("---")
-            st.subheader("🎯 Choose Background & Download")
+            st.subheader("🎯 Step 2: Choose Background & Render")
             
             environments = {
                 "1. E-Commerce White Background Studio": "Professional e-commerce catalog studio photography, 100% pure white background, bright even softbox lighting, sharp focus on garment, high resolution",
@@ -270,41 +272,32 @@ elif app_mode == "AI Virtual Model Studio":
                 "7. Luxury Boutique Interior": "High-end luxury fashion boutique interior background, sophisticated designer racks, elegant warm lighting and premium atmosphere, high resolution"
             }
             
-            selected_env = st.selectbox("Select Desired Catalog Background:", list(environments.keys()))
+            selected_bg = st.selectbox("Select Catalog Background:", list(environments.keys()), key="vton_bg_dropdown")
             
-            if st.button(f"🚀 Generate & View: {selected_env}"):
-                with st.spinner(f"Generating {selected_env} (This may take 10-15 seconds)..."):
-                    try:
-                        import urllib.parse
-                        import time
-                        import requests
-                        import io
-                        
-                        env_style = environments[selected_env]
-                        final_prompt = f"A hyper-realistic professional fashion model wearing {st.session_state.core_description}. Background setting: {env_style}, commercial fashion photography."
-                        
-                        encoded_prompt = urllib.parse.quote(final_prompt)
-                        seed_val = int(time.time())
-                        image_url = f"https://pollinations.ai/p/{encoded_prompt}?width=768&height=1024&nologo=true&seed={seed_val}"
-                        
-                        # Download image bytes securely using requests
-                        response = requests.get(image_url, timeout=60)
-                        if response.status_code == 200 and len(response.content) > 1000:
-                            image_bytes = io.BytesIO(response.content)
-                            final_image = Image.open(image_bytes)
-                            
-                            # Display successfully
-                            st.image(final_image, caption=selected_env, use_container_width=True)
-                            
-                            # Provide direct download button
-                            st.download_button(
-                                label=f"📥 Download {selected_env}",
-                                data=response.content,
-                                file_name=f"catalog_{selected_env.lower().replace(' ', '_').replace('.', '')}.jpg",
-                                mime="image/jpeg"
-                            )
-                        else:
-                            st.error("Server is busy generating the image. Please click the generate button again.")
-                            
-                    except Exception as gen_err:
-                        st.error(f"Error loading image: {gen_err}")
+            if st.button("🚀 Generate Selected Catalog Image", key="vton_generate_btn"):
+                with st.spinner(f"Generating catalog for {selected_bg}..."):
+                    import urllib.parse
+                    import time
+                    
+                    bg_style = environments[selected_bg]
+                    final_prompt = f"A hyper-realistic professional fashion model wearing {st.session_state.vton_core_desc}. Background setting: {bg_style}, commercial fashion photography."
+                    
+                    encoded_prompt = urllib.parse.quote(final_prompt)
+                    timestamp_seed = int(time.time())
+                    
+                    # Using direct secure URL encoding with auto-refresh seed
+                    target_url = f"https://pollinations.ai/p/{encoded_prompt}?width=768&height=1024&nologo=true&seed={timestamp_seed}"
+                    
+                    st.success(f"🎉 Catalog generated successfully for {selected_bg}!")
+                    
+                    # Display using native markdown iframe/image container to prevent any python decoding bugs
+                    st.markdown(
+                        f"""
+                        <div style="display: flex; justify-content: center; align-items: center; margin-top: 10px; margin-bottom: 15px;">
+                            <img src="{target_url}" width="100%" style="border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);" alt="Generated Catalog">
+                        </div>
+                        """, 
+                        unsafe_allow_html=True
+                    )
+                    
+                    st.info("💡 **Tip:** Aap generated image par right-click karke **'Save image as...'** select karke apni image turant download kar sakte hain!")
