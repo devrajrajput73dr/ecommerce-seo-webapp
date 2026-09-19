@@ -217,22 +217,34 @@ elif app_mode == "Listing Audit & Optimization Tool":
                 st.error(f"An error occurred during listing audit: {e}")
 
 # ==========================================
-# MODE 5: AI VIRTUAL MODEL STUDIO (DIRECT POLLINATIONS URL)
+# MODE 5: AI VIRTUAL MODEL STUDIO (MULTI-ANGLE SINGLE GARMENT UPLOAD)
 # ==========================================
 elif app_mode == "AI Virtual Model Studio":
     st.title("👗 AI Virtual Model & Multi-Background Studio")
-    st.write("Upload your garment photo. The app will automatically generate 7 distinct professional backgrounds completely free using Pollinations AI.")
+    st.write("Upload 2-3 photos (different angles/close-ups) of the **same garment**. AI will combine them to understand the exact fabric and generate 7 distinct professional backgrounds completely free.")
     
-    garment_file = st.file_uploader("Upload Garment Image (Saree/Shirt)", type=["jpg", "jpeg", "png"], key="auto_vton_garment")
+    # Allow multiple image uploads for the same garment
+    garment_files = st.file_uploader("Upload Photos of the Same Garment (Max 3 angles/shots)", type=["jpg", "jpeg", "png"], accept_multiple_files=True, key="single_garment_multi_angles")
     
-    if garment_file is not None and gemini_api_key:
-        image = Image.open(garment_file)
-        st.image(image, caption="Your Uploaded Garment", width=300)
-        
-        if st.button("✨ Generate 7 Free Catalog Images"):
-            with st.spinner("Analyzing garment and generating multi-background variations..."):
+    if garment_files and gemini_api_key:
+        if len(garment_files) > 3:
+            st.warning("⚠️ Please upload a maximum of 3 photos for this garment.")
+            garment_files = garment_files[:3]
+            
+        # Display uploaded photos side-by-side
+        st.markdown("### 📸 Uploaded Garment Angles:")
+        cols = st.columns(len(garment_files))
+        opened_images = []
+        for i, file in enumerate(garment_files):
+            img = Image.open(file)
+            opened_images.append(img)
+            with cols[i]:
+                st.image(img, caption=f"Angle {i+1}", use_container_width=True)
+                
+        if st.button("✨ Generate 7 Professional Catalog Images"):
+            with st.spinner("Analyzing all garment angles and preparing multi-background variations..."):
                 try:
-                    # Define 7 distinct settings (First one is Pure White Studio)
+                    # Define 7 distinct settings
                     environments = [
                         ("1. E-Commerce White Background Studio", "Professional e-commerce catalog studio photography, 100% pure white background, bright even softbox lighting, sharp focus on garment, high resolution"),
                         ("2. Lush Green Garden Outdoor", "Outdoor natural lifestyle setting, lush green botanical garden background, soft natural sunlight, cinematic depth of field, high resolution"),
@@ -243,28 +255,32 @@ elif app_mode == "AI Virtual Model Studio":
                         ("7. Luxury Boutique Interior", "High-end luxury fashion boutique interior background, sophisticated designer racks, elegant warm lighting and premium atmosphere, high resolution")
                     ]
                     
-                    # Generate base description using Gemini
-                    base_prompt_query = "Describe a professional female model wearing this exact garment in detail, keeping the exact fabric color, patterns, and design unchanged. Give only the core clothing and model description."
                     model = get_working_model(is_image=True)
-                    base_response = model.generate_content([base_prompt_query, image])
+                    
+                    # Pass all uploaded angle images together to Gemini for comprehensive analysis
+                    analysis_prompt = [
+                        "Analyze these multiple photos of the same garment. Describe the exact fabric color, print design, borders, motifs, and details comprehensively. Create a detailed description for a professional female model wearing this exact garment.",
+                        *opened_images
+                    ]
+                    
+                    base_response = model.generate_content(analysis_prompt)
                     core_description = base_response.text.title().strip()
                     
-                    st.success("Base Garment Analysis Complete! Rendering 7 images via Pollinations AI...")
+                    st.success("Comprehensive Garment Analysis Complete! Rendering 7 catalog variations...")
                     
                     import urllib.parse
                     import time
                     
-                    # Loop through all 7 environments and display direct URLs smoothly
+                    # Loop through all 7 environments and display using HTML img tag
                     for env_title, env_style in environments:
                         st.markdown(f"### 🌟 {env_title}")
                         final_prompt = f"A hyper-realistic professional fashion model wearing {core_description}. Background setting: {env_style}, commercial fashion photography."
                         
                         encoded_prompt = urllib.parse.quote(final_prompt)
-                        # Adding timestamp seed so browser/streamlit fetches fresh image without caching errors
                         seed_val = int(time.time())
                         image_url = f"https://pollinations.ai/p/{encoded_prompt}?width=768&height=1024&nologo=true&seed={seed_val}"
                         
-                        st.image(image_url, caption=env_title, use_container_width=True)
+                        st.markdown(f'<img src="{image_url}" width="100%" style="border-radius:10px; margin-bottom:10px;" alt="{env_title}">', unsafe_allow_html=True)
                             
                 except Exception as e:
                     st.error(f"An error occurred: {e}")
