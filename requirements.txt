@@ -3,4 +3,3 @@ google-generativeai
 pillow
 pandas
 requests
-huggingface_hub
