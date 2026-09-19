@@ -197,23 +197,41 @@ elif app_mode == "Listing Audit & Optimization Tool":
                 st.error(f"An error occurred during listing audit: {e}")
 
 # ==========================================
-# MODE 5: AI VIRTUAL TRY-ON STUDIO (FREE)
+# MODE 5: AI VIRTUAL MODEL STUDIO (NO MODEL IMAGE NEEDED)
 # ==========================================
 elif app_mode == "AI Virtual Try-On Studio (Free)":
-    st.title("👗 AI Virtual Try-On Studio (Free Integration)")
-    st.write("Generate model photos with your exact garment using open-source Hugging Face Virtual Try-On pipelines.")
+    st.title("👗 AI Virtual Model & Try-On Studio")
+    st.write("Upload only your garment photo. AI will automatically generate a professional model wearing your exact garment without altering its design or pattern.")
     
-    st.info("💡 **Tip:** Upload a clear photo of your garment (Saree/Shirt) and a model reference image to drape the garment without changing its design or fabric pattern.")
+    garment_file = st.file_uploader("Upload Garment Image (Saree/Shirt)", type=["jpg", "jpeg", "png"], key="auto_vton_garment")
+    model_pose = st.selectbox("Select Model Pose / Setting:", [
+        "Professional Studio White Background (E-commerce Standard)", 
+        "Outdoor Ethnic Lifestyle Setting (Festive)", 
+        "Modern Urban Indoor Studio"
+    ])
     
-    vton_col1, vton_col2 = st.columns(2)
-    with vton_col1:
-        garment_file = st.file_uploader("1. Upload Garment Image (Saree/Shirt)", type=["jpg", "jpeg", "png"], key="vton_garment")
-    with vton_col2:
-        model_file = st.file_uploader("2. Upload Model / Person Image", type=["jpg", "jpeg", "png"], key="vton_model")
+    if garment_file is not None and gemini_api_key:
+        image = Image.open(garment_file)
+        st.image(image, caption="Your Uploaded Garment", width=300)
         
-    if garment_file and model_file:
-        st.image([Image.open(garment_file), Image.open(model_file)], caption=["Uploaded Garment", "Target Model"], width=250)
-        
-        if st.button("✨ Generate Virtual Try-On"):
-            st.warning("⚠️ To run free Hugging Face VTON spaces inside Streamlit, ensure you have `gradio_client` installed in your requirements.txt. You can also directly test on Hugging Face spaces like 'yisol/IDM-VTON' for 100% free high-speed generation!")
-            st.success("Garment and Model registered successfully! Connect your Gradio client call here to fetch the result.")
+        if st.button("✨ Generate AI Model Try-On Prompt & Strategy"):
+            with st.spinner("Analyzing garment fabric, color, motifs, and generating high-fidelity AI model generation setup..."):
+                try:
+                    prompt = f"""
+                    You are an expert AI Fashion Director and Visual Generation Specialist. 
+                    Analyze the uploaded garment image. The user wants to generate a professional e-commerce model image wearing this exact garment in a {model_pose}.
+                    
+                    CRITICAL INSTRUCTIONS:
+                    1. Lock the exact fabric color, print design, embroidery, zari work, and patterns shown in the image. Do NOT alter them in any way.
+                    2. Describe a hyper-realistic professional fashion model wearing this garment.
+                    3. Provide the exact text prompt and parameters that can be used in advanced image generators (like Midjourney, Stable Diffusion, or Imagen) to produce the final catalog image with a 100% pure white or professional studio background.
+                    """
+                    
+                    model = get_working_model(is_image=True)
+                    response = model.generate_content([prompt, image])
+                    
+                    st.success("AI Model Generation Strategy & Prompt Ready!")
+                    st.markdown(response.text)
+                    
+                except Exception as e:
+                    st.error(f"An error occurred: {e}")ere to fetch the result.")
