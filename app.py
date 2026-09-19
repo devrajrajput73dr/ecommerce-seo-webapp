@@ -22,9 +22,6 @@ if "GEMINI_API_KEY" in st.secrets:
 else:
     gemini_api_key = st.sidebar.text_input("Enter your Gemini API Key", type="password")
 
-else:
-    hf_api_key = st.sidebar.text_input("Enter Hugging Face API Key (Free)", type="password")
-
 if not gemini_api_key:
     st.warning("⚠️ Please configure your Gemini API key in Streamlit Secrets or enter it in the sidebar.")
 
