@@ -4,7 +4,6 @@ import google.generativeai as genai
 import pandas as pd
 import io
 import requests
-from huggingface_hub import InferenceClient
 
 st.set_page_config(page_title="E-commerce Elite SEO & Automation Suite", layout="wide")
 
@@ -218,7 +217,7 @@ elif app_mode == "Listing Audit & Optimization Tool":
                 st.error(f"An error occurred during listing audit: {e}")
 
 # ==========================================
-# MODE 5: AI VIRTUAL MODEL STUDIO (POLLINATIONS FREE MULTI-BG)
+# MODE 5: AI VIRTUAL MODEL STUDIO (FIXED POLLINATIONS MULTI-BG)
 # ==========================================
 elif app_mode == "AI Virtual Model Studio":
     st.title("👗 AI Virtual Model & Multi-Background Studio")
@@ -248,22 +247,32 @@ elif app_mode == "AI Virtual Model Studio":
                     base_prompt_query = "Describe a professional female model wearing this exact garment in detail, keeping the exact fabric color, patterns, and design unchanged. Give only the core clothing and model description."
                     model = get_working_model(is_image=True)
                     base_response = model.generate_content([base_prompt_query, image])
-                    core_description = base_response.text.strip()
+                    core_description = base_response.text.title().strip()
                     
                     st.success("Base Garment Analysis Complete! Rendering 7 images via Pollinations AI...")
                     
                     import urllib.parse
+                    import io
+                    import requests
                     
-                    # Loop through all 7 environments and generate images using Pollinations Free URL
+                    # Loop through all 7 environments and fetch images securely via requests
                     for env_title, env_style in environments:
                         st.markdown(f"### 🌟 {env_title}")
                         final_prompt = f"A hyper-realistic professional fashion model wearing {core_description}. Background setting: {env_style}, commercial fashion photography."
                         
-                        # Encode prompt for URL
                         encoded_prompt = urllib.parse.quote(final_prompt)
                         image_url = f"https://pollinations.ai/p/{encoded_prompt}?width=768&height=1024&nologo=true"
                         
-                        st.image(image_url, caption=env_title, use_container_width=True)
+                        with st.spinner(f"Rendering {env_title}..."):
+                            try:
+                                img_response = requests.get(image_url, timeout=30)
+                                if img_response.status_code == 200:
+                                    rendered_image = Image.open(io.BytesIO(img_response.content))
+                                    st.image(rendered_image, caption=env_title, use_container_width=True)
+                                else:
+                                    st.warning(f"⚠️ Could not load {env_title}. Retrying...")
+                            except Exception as img_err:
+                                st.error(f"Error loading image: {img_err}")
                             
                 except Exception as e:
                     st.error(f"An error occurred: {e}")
