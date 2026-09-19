@@ -218,11 +218,11 @@ elif app_mode == "Listing Audit & Optimization Tool":
                 st.error(f"An error occurred during listing audit: {e}")
 
 # ==========================================
-# MODE 5: AI VIRTUAL MODEL STUDIO (7 BACKGROUNDS GEN)
+# MODE 5: AI VIRTUAL MODEL STUDIO (POLLINATIONS FREE MULTI-BG)
 # ==========================================
 elif app_mode == "AI Virtual Model Studio":
     st.title("👗 AI Virtual Model & Multi-Background Studio")
-    st.write("Upload your garment photo. The app will automatically generate 7 distinct professional backgrounds (Studio, Garden, Home, Heritage, Sunset, Street Runway, and Boutique) using Hugging Face Free API.")
+    st.write("Upload your garment photo. The app will automatically generate 7 distinct professional backgrounds completely free using Pollinations AI.")
     
     garment_file = st.file_uploader("Upload Garment Image (Saree/Shirt)", type=["jpg", "jpeg", "png"], key="auto_vton_garment")
     
@@ -230,44 +230,40 @@ elif app_mode == "AI Virtual Model Studio":
         image = Image.open(garment_file)
         st.image(image, caption="Your Uploaded Garment", width=300)
         
-        if st.button("✨ Generate 7 Distinct Catalog Images"):
-            with st.spinner("Analyzing garment and preparing 7 background variations..."):
+        if st.button("✨ Generate 7 Free Catalog Images"):
+            with st.spinner("Analyzing garment and generating multi-background variations..."):
                 try:
-                    # Define 7 distinct settings including white studio and 6 varied backgrounds
+                    # Define 7 distinct settings (First one is Pure White Studio)
                     environments = [
-                        ("1. E-Commerce White Background Studio", "Professional e-commerce catalog studio photography, 100% pure white background, bright even softbox lighting, sharp focus on garment."),
-                        ("2. Lush Green Garden Outdoor", "Outdoor natural lifestyle setting, lush green botanical garden background, soft natural sunlight, cinematic depth of field."),
-                        ("3. Modern Luxury Home Interior", "Modern luxury indoor home living room interior background, elegant warm ambient lighting, elegant interior decor."),
-                        ("4. Traditional Heritage Courtyard", "Traditional Indian heritage courtyard background, ethnic architecture, warm terracotta tones, royal heritage aesthetics."),
-                        ("5. Golden Hour Sunset Outdoor", "Outdoor sunset golden hour setting, warm glowing sunlight flare, urban chic aesthetic background."),
-                        ("6. Modern Fashion Street Runway", "Modern urban city street fashion runway background, stylish architectural backdrop, dynamic street style lighting."),
-                        ("7. Luxury Boutique Interior", "High-end luxury fashion boutique interior background, sophisticated designer racks, elegant warm lighting and premium atmosphere.")
+                        ("1. E-Commerce White Background Studio", "Professional e-commerce catalog studio photography, 100% pure white background, bright even softbox lighting, sharp focus on garment, high resolution"),
+                        ("2. Lush Green Garden Outdoor", "Outdoor natural lifestyle setting, lush green botanical garden background, soft natural sunlight, cinematic depth of field, high resolution"),
+                        ("3. Modern Luxury Home Interior", "Modern luxury indoor home living room interior background, elegant warm ambient lighting, elegant interior decor, high resolution"),
+                        ("4. Traditional Heritage Courtyard", "Traditional Indian heritage courtyard background, ethnic architecture, warm terracotta tones, royal heritage aesthetics, high resolution"),
+                        ("5. Golden Hour Sunset Outdoor", "Outdoor sunset golden hour setting, warm glowing sunlight flare, urban chic aesthetic background, high resolution"),
+                        ("6. Modern Fashion Street Runway", "Modern urban city street fashion runway background, stylish architectural backdrop, dynamic street style lighting, high resolution"),
+                        ("7. Luxury Boutique Interior", "High-end luxury fashion boutique interior background, sophisticated designer racks, elegant warm lighting and premium atmosphere, high resolution")
                     ]
                     
-                    # First, generate a base prompt using Gemini
+                    # Generate base description using Gemini
                     base_prompt_query = "Describe a professional female model wearing this exact garment in detail, keeping the exact fabric color, patterns, and design unchanged. Give only the core clothing and model description."
                     model = get_working_model(is_image=True)
                     base_response = model.generate_content([base_prompt_query, image])
                     core_description = base_response.text.strip()
                     
-                    st.success("Base Garment & Model Analysis Complete! Generating 7 variations...")
+                    st.success("Base Garment Analysis Complete! Rendering 7 images via Pollinations AI...")
                     
-                    # Loop through all 7 environments
+                    import urllib.parse
+                    
+                    # Loop through all 7 environments and generate images using Pollinations Free URL
                     for env_title, env_style in environments:
                         st.markdown(f"### 🌟 {env_title}")
-                        final_prompt = f"A hyper-realistic professional fashion model wearing {core_description}. Background setting: {env_style}, high resolution, sharp focus, commercial fashion photography."
+                        final_prompt = f"A hyper-realistic professional fashion model wearing {core_description}. Background setting: {env_style}, commercial fashion photography."
                         
-                        st.code(final_prompt)
+                        # Encode prompt for URL
+                        encoded_prompt = urllib.parse.quote(final_prompt)
+                        image_url = f"https://pollinations.ai/p/{encoded_prompt}?width=768&height=1024&nologo=true"
                         
-                        if hf_api_key:
-                            with st.spinner(f"Rendering {env_title}..."):
-                                final_image = generate_hf_image(final_prompt, hf_api_key)
-                                if final_image:
-                                    st.image(final_image, caption=env_title, use_container_width=True)
-                                else:
-                                    st.warning(f"⚠️ Could not render {env_title} due to high server traffic. Please try again.")
-                        else:
-                            st.info("💡 Please enter your free Hugging Face API Key in the sidebar to render images.")
+                        st.image(image_url, caption=env_title, use_container_width=True)
                             
                 except Exception as e:
                     st.error(f"An error occurred: {e}")
