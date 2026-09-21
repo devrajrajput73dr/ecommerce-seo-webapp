@@ -6,6 +6,7 @@ import urllib.parse
 import time
 import requests
 import pandas as pd
+import fitz  # PyMuPDF for PDF to Image conversion
 
 # Page Configuration
 st.set_page_config(
@@ -369,10 +370,10 @@ elif app_mode == "AI Virtual Model Studio (Gemini Powered)":
 # MODE 6: SMART SHIPPING LABEL CROPPER & PARTNER SORTER
 # ==========================================
 elif app_mode == "Smart Shipping Label Cropper & Sorter":
-    st.title("✂️ Smart Shipping Label Cropper & Partner Sorter")
+    st.title("✂️ Smart Shipping Label Cropper & Thermal Converter")
     st.markdown("""
     <div style="background-color: #f0f2f6; padding: 10px; border-radius: 8px; margin-bottom: 15px;">
-    <b>Advanced E-Commerce Tool:</b> Shipping label PDFs ya images yahan upload karein. Yeh tool invoices ko filter karega, 4x6 thermal format me crop/split instructions dega, delivery partners ke hisaab से sort karega aur SKU pick-list summary banayega.
+    <b>Advanced E-Commerce Tool:</b> Shipping label PDFs ya images yahan upload karein. Yeh tool invoices ko remove karega, thermal 4x6 size me crop karega, delivery partners ke hisaab se sort karega aur direct download button dega.
     </div>
     """, unsafe_allow_html=True)
     
@@ -387,25 +388,35 @@ elif app_mode == "Smart Shipping Label Cropper & Sorter":
         st.markdown(f"### 📄 Uploaded Files Count: {len(label_files)}")
         
         gemini_payload_parts = []
+        converted_images = []
+        
         for file in label_files:
             file_bytes = file.getvalue()
             if file.type == "application/pdf":
-                st.info(f"📂 PDF Loaded & Prepared: {file.name} ({file.size / 1024:.1f} KB)")
-                # Pass PDF as inline data part dictionary compatible with Gemini API
+                st.info(f"📂 PDF Loaded: {file.name} ({file.size / 1024:.1f} KB)")
                 gemini_payload_parts.append({
                     "mime_type": "application/pdf",
                     "data": file_bytes
                 })
+                # Convert PDF page 1 to image for cropping tool preview
+                try:
+                    pdf_doc = fitz.open(stream=file_bytes, filetype="pdf")
+                    page = pdf_doc[0]
+                    pix = page.get_pixmap(dpi=150)
+                    img = Image.open(io.BytesIO(pix.tobytes("png")))
+                    converted_images.append((file.name, img))
+                except Exception as ex:
+                    st.warning(f"Could not preview PDF page: {ex}")
             else:
                 img = Image.open(file)
-                st.image(img, caption=f"Image: {file.name}", width=300)
+                converted_images.append((file.name, img))
                 gemini_payload_parts.append(img)
                 
         if not gemini_api_key:
             st.warning("⚠️ Kripya pehle sidebar mein Gemini API Key enter karein.")
         else:
-            if st.button("🚀 Process, Crop & Sort by Delivery Partner / SKU"):
-                with st.spinner("Analyzing shipping label files, stripping invoices, and sorting by partner & SKU..."):
+            if st.button("🚀 Process, Auto-Crop & Sort by Partner"):
+                with st.spinner("Analyzing shipping labels, stripping invoices, and preparing thermal crops..."):
                     try:
                         model = get_working_model()
                         cropper_prompt = [
@@ -415,19 +426,42 @@ elif app_mode == "Smart Shipping Label Cropper & Sorter":
                             Analyze the uploaded shipping label document(s)/image(s):
                             1. **Invoice & Margin Removal:** Identify and separate tax invoice sections from the actual logistics shipping label.
                             2. **Delivery Partner Detection:** Automatically classify each label based on courier logos/text (e.g., Flipkart Ekart, Amazon Shipping, Delhivery, Shadowfax, Xpressbees, Valmo/Meesho).
-                            3. **SKU-wise Sorting & Pick-List Summary:** Group orders by SKU/Item and provide a consolidated pick-list summary for easy dispatch.
-                            4. **Thermal 4x6 Optimization Details:** Provide precise cropping zones/instructions suitable for a 4x6 inch (100x150mm) thermal printer layout.
+                            3. **SKU-wise Sorting & Pick-List Summary:** Group orders by SKU/Item and provide a consolidated pick-list summary.
                             
-                            Provide clean structured output with clear headings for Partner Sorting, SKU Pick-list Summary, and Thermal Cropping Instructions.""",
+                            Provide clean structured output with clear headings for Partner Sorting and SKU Pick-list Summary.""",
                         ]
-                        
-                        # Extend prompt with prepared file parts (Images or PDF byte dicts)
                         cropper_payload = cropper_prompt + gemini_payload_parts
                             
                         response = safe_generate_content(model, cropper_payload)
-                        st.markdown("### 📊 Smart Label Cropping, SKU Summary & Partner Sorting Report")
+                        st.markdown("### 📊 Smart Label Sorting & Analysis Report")
                         st.write(response.text)
                         
-                        st.success("✅ Files successfully processed, sorted by courier partner & SKU!")
+                        st.success("✅ Analysis completed successfully! Below are your cropped thermal labels ready for 4x6 print:")
+                        
+                        # Automated 4x6 Thermal Cropping & Download Section
+                        st.markdown("---")
+                        st.subheader("🖨️ Ready-to-Print 4x6 Thermal Labels (Auto-Cropped)")
+                        
+                        for fname, img in converted_images:
+                            width, height = img.size
+                            # Automatically crop top 55% to 60% of the A4 sheet where shipping label resides (stripping bottom invoice)
+                            crop_height = int(height * 0.58)
+                            cropped_label = img.crop((0, 0, width, crop_height))
+                            
+                            col_prev, col_dl = st.columns([1, 1])
+                            with col_prev:
+                                st.image(cropped_label, caption=f"Cropped Thermal Label: {fname}", use_container_width=True)
+                            with col_dl:
+                                st.markdown(f"#### File: {fname}")
+                                buf = io.BytesIO()
+                                cropped_label.save(buf, format="JPEG", quality=95)
+                                byte_im = buf.getvalue()
+                                
+                                st.download_button(
+                                    label=f"📥 Download 4x6 Thermal Label ({fname})",
+                                    data=byte_im,
+                                    file_name=f"thermal_label_{fname.rsplit('.', 1)[0]}.jpg",
+                                    mime="image/jpeg"
+                                )
                     except Exception as e:
                         st.error(f"Cropping & Sorting Error: {e}")
