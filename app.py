@@ -44,6 +44,44 @@ if gemini_api_key:
 def get_working_model():
     return genai.GenerativeModel('gemini-2.5-flash')
 
+# Helper function with automatic retry for rate limits (429 errors)
+def safe_generate_content(model, contents, retries=3, delay=10):
+    for attempt in range(retries):
+        try:
+            return model.generate_content(contents)
+        except Exception as e:
+            error_str = str(e)
+            if "429" in error_str or "Quota exceeded" in error_str:
+                if attempt < retries - 1:
+                    time.sleep(delay)
+                    continue
+            raise e
+
+# ==========================================
+# MASTER GARMENT & PLATFORM ATTRIBUTES GUIDE SECTION
+# ==========================================
+st.markdown("""
+# 👑 E-Commerce Garment & Multi-Platform Master Guide
+<div style="background-color: #f8f9fa; padding: 15px; border-radius: 10px; border-left: 5px solid #ff9900; margin-bottom: 20px;">
+<h3>📌 Complete Garment & Marketplace Attributes Reference</h3>
+<p>Yeh section sabhi garments aur e-commerce platforms ke core parameters ko define karta hai:</p>
+
+<ul>
+    <li><b>Garment Core Attributes:</b>
+        <ul>
+            <li><b>Design Type & Style:</b> Ethnic, Western, Indo-Western, Anarkali, Straight Cut, A-Line, Kanjivaram, Banarasi, Designer, Casual, Party Wear.</li>
+            <li><b>Print & Pattern Type:</b> Floral Print, Block Print, Digital Print, Foil Print, Embroidered, Zari Work, Sequins, Handloom Weave, Solid, Tie-Dye.</li>
+            <li><b>Occasion:</b> Festive, Wedding, Party, Casual Daily Wear, Office Wear, Ceremonial, Traditional.</li>
+            <li><b>Color & Fabric Quality:</b> Exact shade matching (Primary/Secondary color), Pure Silk, Georgette, Cotton, Chiffon, Organza, Velvet with GSM/Quality grade.</li>
+        </ul>
+    </li>
+    <li><b>Amazon A9/A10 Algorithm Attributes:</b> High search volume backend keywords, conversion-focused bullet points, exact match keyword density, clear dimensions and material specifications.</li>
+    <li><b>Flipkart Algorithm Attributes:</b> Catalog clarity, value propositions, key technical specs, high-search category attributes, competitive pricing indicators.</li>
+    <li><b>Meesho Prism Algorithm Attributes:</b> Budget focus, trendy visual appeal, regional catalog tags, low-price high-conversion positioning, simplified descriptors for mass buyers.</li>
+</ul>
+</div>
+""", unsafe_allow_html=True)
+
 # ==========================================
 # MODE 1: SINGLE LISTING & SEO GENERATOR (MULTIPLE IMAGES)
 # ==========================================
@@ -73,7 +111,7 @@ if app_mode == "Single Listing & SEO Generator":
         if not gemini_api_key:
             st.warning("⚠️ Kripya pehle Gemini API Key configure karein.")
         else:
-            with st.spinner("Analyzing multiple images and generating SEO optimized content..."):
+            with st.spinner("Analyzing multiple images and generating SEO optimized content (with auto-retry)..."):
                 try:
                     model = get_working_model()
                     content_prompt = [
@@ -81,7 +119,7 @@ if app_mode == "Single Listing & SEO Generator":
                         Product Name: {product_name}
                         Additional Details: {key_features}
                         
-                        Please analyze the uploaded product images (different angles) and details to provide:
+                        Please analyze the uploaded product images (different angles) and details keeping all garment attributes (Design, Style, Print, Occasion, Color) in mind to provide:
                         1. Amazon A9/A10 Optimized Title & Backend Keywords.
                         2. High-converting Bullet Points.
                         3. Flipkart Algorithm optimized description & attributes.
@@ -90,7 +128,7 @@ if app_mode == "Single Listing & SEO Generator":
                     if 'opened_listing_images' in locals() and opened_listing_images:
                         content_prompt.extend(opened_listing_images)
                         
-                    response = model.generate_content(content_prompt)
+                    response = safe_generate_content(model, content_prompt)
                     st.markdown("### 📊 Generated Multi-Platform SEO Content")
                     st.write(response.text)
                 except Exception as e:
@@ -132,7 +170,7 @@ elif app_mode == "Listing Audit & Optimization Tool":
                     model = get_working_model()
                     audit_payload = [
                         f"""Act as a Senior E-Commerce Marketplace Auditor & SEO Expert for Amazon, Flipkart, and Meesho.
-                        Analyze the following existing listing along with the uploaded product images:
+                        Analyze the following existing listing along with the uploaded product images, verifying design type, style, print type, occasion, and color attributes:
                         - Title: {existing_title}
                         - Bullet Points: {existing_bullets}
                         - Description: {existing_desc}
@@ -145,7 +183,7 @@ elif app_mode == "Listing Audit & Optimization Tool":
                     if 'opened_audit_images' in locals() and opened_audit_images:
                         audit_payload.extend(opened_audit_images)
                         
-                    response = model.generate_content(audit_payload)
+                    response = safe_generate_content(model, audit_payload)
                     st.markdown("### 📈 Audit Report & Optimized Content")
                     st.write(response.text)
                 except Exception as e:
@@ -183,12 +221,12 @@ elif app_mode == "Bulk CSV Catalog Generator":
                         f"""Generate bulk e-commerce catalog data for the following categories:
                         {categories_input}
                         
-                        Return a clean structured analysis with Amazon A9/A10 titles, Flipkart attributes, bullet points, and trending high-search keywords.""",
+                        Return a clean structured analysis with Amazon A9/A10 titles, Flipkart attributes, bullet points, and trending high-search keywords considering all garment attributes.""",
                     ]
                     if 'opened_bulk_images' in locals() and opened_bulk_images:
                         bulk_prompt.extend(opened_bulk_images)
                         
-                    response = model.generate_content(bulk_prompt)
+                    response = safe_generate_content(model, bulk_prompt)
                     st.markdown("### 📋 Generated Bulk Data")
                     st.write(response.text)
                     
@@ -284,7 +322,7 @@ elif app_mode == "AI Virtual Model Studio (Gemini Powered)":
                         Prepare a strict description for a professional e-commerce fashion catalog featuring a model wearing this exact unalterable garment.""",
                         *opened_images
                     ]
-                    response = model.generate_content(lock_prompt)
+                    response = safe_generate_content(model, lock_prompt)
                     if response.text:
                         st.session_state.locked_garment_profile = response.text.strip()
                         st.success("✅ Garment Successfully Locked! Color, pattern, and quality parameters secured.")
@@ -331,7 +369,7 @@ elif app_mode == "AI Virtual Model Studio (Gemini Powered)":
                         Provide a vivid descriptive prompt for image rendering.
                         """
                         
-                        prompt_response = model.generate_content(generation_instruction)
+                        prompt_response = safe_generate_content(model, generation_instruction)
                         if prompt_response.text:
                             optimized_prompt_text = prompt_response.text.strip()
                         else:
