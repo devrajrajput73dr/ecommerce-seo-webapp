@@ -58,7 +58,7 @@ def safe_generate_content(model, contents, retries=3, delay=10):
             raise e
 
 # ==========================================
-# MODE 1: SINGLE LISTING & SEO GENERATOR
+# MODE 1: SINGLE LISTING & SEO GENERATOR (SINGLE API CALL OPTIMIZED)
 # ==========================================
 if app_mode == "Single Listing & SEO Generator":
     st.title("📦 Multi-Platform SEO Listing Generator (Multiple Images)")
@@ -86,46 +86,36 @@ if app_mode == "Single Listing & SEO Generator":
         if not gemini_api_key:
             st.warning("⚠️ Kripya pehle Gemini API Key configure karein.")
         else:
-            with st.spinner("Analyzing product images, extracting attributes, and generating complete multi-platform listings..."):
+            with st.spinner("Analyzing product images and generating complete multi-platform listings (Single Optimized Call)..."):
                 try:
                     model = get_working_model()
                     
-                    # Step 1: Product Analysis (Design Type, Print Type, Occasion, Color)
-                    analysis_prompt = [
-                        f"""Analyze the uploaded product images and details for '{product_name}'. 
-                        Provide a structured breakdown of the following core attributes:
-                        - **Design Type & Style:** (e.g., Ethnic, Anarkali, Straight Cut, Kanjivaram, etc.)
-                        - **Print & Pattern Type:** (e.g., Floral Print, Block Print, Embroidered, Zari Work, Solid, etc.)
-                        - **Occasion:** (e.g., Festive, Wedding, Party, Casual Daily Wear, etc.)
-                        - **Color & Fabric Quality:** (Primary/Secondary color shade, fabric type and quality grade)""",
+                    # Single combined prompt to prevent rate limits and save quota
+                    unified_prompt = [
+                        f"""Act as an E-commerce Senior SEO Expert & Garment Analyst for Amazon (A9/A10), Flipkart, and Meesho algorithms.
+                        Product Name: {product_name}
+                        Additional Details: {key_features}
+                        
+                        Please analyze the uploaded product images (different angles) and details to provide:
+                        
+                        PART 1: GARMENT & PRODUCT ANALYSIS BREAKDOWN
+                        - Design Type & Style (e.g., Ethnic, Anarkali, Kanjivaram, etc.)
+                        - Print & Pattern Type (e.g., Floral Print, Embroidered, Zari Work, etc.)
+                        - Occasion (Festive, Wedding, Party, etc.)
+                        - Color & Fabric Quality (Shade, fabric type & grade)
+                        
+                        PART 2: COMPLETE MULTI-PLATFORM SEO CONTENT
+                        Provide separate, fully detailed sections for:
+                        1. Amazon India (A9/A10): Title, Bullet Points, Product Description, Search / Backend Keywords.
+                        2. Flipkart: Title, Bullet Points, Product Description, Search Keywords.
+                        3. Meesho Prism: Title, Trendy Description, Budget & Visual Focus Keywords.""",
                     ]
                     if 'opened_listing_images' in locals() and opened_listing_images:
-                        analysis_prompt.extend(opened_listing_images)
+                        unified_prompt.extend(opened_listing_images)
                         
-                    analysis_response = safe_generate_content(model, analysis_prompt)
-                    
-                    st.markdown("---")
-                    st.markdown("### 🏷️ Step 1: Garment & Product Analysis Breakdown")
-                    st.info(analysis_response.text)
-                    
-                    # Step 2: Comprehensive Multi-Platform SEO Listing (Ensuring Title, Description, Bullet Points, and Search Keywords for ALL platforms)
-                    seo_prompt = [
-                        f"""Based on the garment analysis and product details for '{product_name}', act as an E-commerce Senior SEO Expert for Amazon (A9/A10), Flipkart, and Meesho algorithms.
-                        
-                        You MUST provide separate, fully detailed, and high-converting sections for EACH of the three platforms. Every platform section must strictly contain:
-                        1. **Title** (Optimized with high-search keywords)
-                        2. **Bullet Points / Key Features** (Conversion-focused highlights)
-                        3. **Product Description** (Detailed rich description)
-                        4. **Search Keywords / Backend Keywords** (High-volume searchable terms)
-                        
-                        Structure your output clearly with headings for Amazon India, Flipkart, and Meesho Prism respectively.""",
-                    ]
-                    if 'opened_listing_images' in locals() and opened_listing_images:
-                        seo_prompt.extend(opened_listing_images)
-                        
-                    seo_response = safe_generate_content(model, seo_prompt)
-                    st.markdown("### 📊 Step 2: Complete Multi-Platform SEO Content (Amazon, Flipkart, Meesho)")
-                    st.write(seo_response.text)
+                    response = safe_generate_content(model, unified_prompt)
+                    st.markdown("### 📊 Complete Garment Analysis & Multi-Platform SEO Content")
+                    st.write(response.text)
                     
                 except Exception as e:
                     st.error(f"Error: {e}")
