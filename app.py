@@ -45,21 +45,35 @@ def get_working_model():
     return genai.GenerativeModel('gemini-2.5-flash')
 
 # ==========================================
-# MODE 1: SINGLE LISTING & SEO GENERATOR (WITH IMAGE UPLOAD)
+# MODE 1: SINGLE LISTING & SEO GENERATOR (MULTIPLE IMAGES)
 # ==========================================
 if app_mode == "Single Listing & SEO Generator":
-    st.title("📦 Multi-Platform SEO Listing Generator (With Image Analysis)")
-    st.markdown("Garment ki image upload karein aur Amazon A9/A10, Flipkart, aur Meesho algorithms ke liye high-converting SEO titles, bullet points, aur descriptions generate karein.")
+    st.title("📦 Multi-Platform SEO Listing Generator (Multiple Images)")
+    st.markdown("Garment ki 3-4 alag-alag angles ki images upload karein aur Amazon A9/A10, Flipkart, aur Meesho algorithms ke liye high-converting SEO content generate karein.")
     
-    uploaded_listing_img = st.file_uploader("Upload Garment/Product Image for SEO Analysis", type=["jpg", "jpeg", "png"], key="single_listing_img")
+    uploaded_listing_imgs = st.file_uploader("Upload Product/Garment Images (Max 4 angles)", type=["jpg", "jpeg", "png"], accept_multiple_files=True, key="single_listing_imgs")
     product_name = st.text_input("Enter Product Name / Category (e.g., Designer Silk Saree):")
     key_features = st.text_area("Enter Key Features / Fabric Details (e.g., Pure Kanjivaram Silk, Zari Work):")
     
+    if uploaded_listing_imgs:
+        if len(uploaded_listing_imgs) > 4:
+            st.warning("⚠️ Please upload a maximum of 4 images.")
+            uploaded_listing_imgs = uploaded_listing_imgs[:4]
+            
+        st.markdown("### 📸 Uploaded Images Preview:")
+        cols = st.columns(len(uploaded_listing_imgs))
+        opened_listing_images = []
+        for i, file in enumerate(uploaded_listing_imgs):
+            img = Image.open(file)
+            opened_listing_images.append(img)
+            with cols[i]:
+                st.image(img, caption=f"View {i+1}", use_container_width=True)
+                
     if st.button("Generate Optimized Listings") and product_name:
         if not gemini_api_key:
             st.warning("⚠️ Kripya pehle Gemini API Key configure karein.")
         else:
-            with st.spinner("Analyzing image and generating SEO optimized content..."):
+            with st.spinner("Analyzing multiple images and generating SEO optimized content..."):
                 try:
                     model = get_working_model()
                     content_prompt = [
@@ -67,15 +81,14 @@ if app_mode == "Single Listing & SEO Generator":
                         Product Name: {product_name}
                         Additional Details: {key_features}
                         
-                        Please analyze the uploaded image and details to provide:
+                        Please analyze the uploaded product images (different angles) and details to provide:
                         1. Amazon A9/A10 Optimized Title & Backend Keywords.
                         2. High-converting Bullet Points.
                         3. Flipkart Algorithm optimized description & attributes.
                         4. Meesho Prism Algorithm trendy description & budget focus.""",
                     ]
-                    if uploaded_listing_img:
-                        img = Image.open(uploaded_listing_img)
-                        content_prompt.append(img)
+                    if 'opened_listing_images' in locals() and opened_listing_images:
+                        content_prompt.extend(opened_listing_images)
                         
                     response = model.generate_content(content_prompt)
                     st.markdown("### 📊 Generated Multi-Platform SEO Content")
@@ -84,21 +97,32 @@ if app_mode == "Single Listing & SEO Generator":
                     st.error(f"Error: {e}")
 
 # ==========================================
-# MODE 2: LISTING AUDIT & OPTIMIZATION TOOL (WITH IMAGE UPLOAD)
+# MODE 2: LISTING AUDIT & OPTIMIZATION TOOL (WITH MULTIPLE IMAGES)
 # ==========================================
 elif app_mode == "Listing Audit & Optimization Tool":
     st.title("🔍 E-Commerce Listing Audit & Optimization")
     st.markdown("""
     <div style="background-color: #f0f2f6; padding: 10px; border-radius: 8px; margin-bottom: 15px;">
-    Apni mojuda listing aur product ki image upload karein. Yeh tool Amazon A9/A10, Flipkart, aur Meesho algorithms ke mutabiq audit karke sudhara hua version dega.
+    Apni mojuda listing aur product ki images upload karein. Yeh tool Amazon A9/A10, Flipkart, aur Meesho algorithms ke mutabiq audit karke sudhara hua version dega.
     </div>
     """, unsafe_allow_html=True)
     
-    audit_img = st.file_uploader("Upload Product/Garment Image for Audit Comparison", type=["jpg", "jpeg", "png"], key="audit_img")
+    audit_imgs = st.file_uploader("Upload Product/Garment Images for Audit (Max 4 images)", type=["jpg", "jpeg", "png"], accept_multiple_files=True, key="audit_imgs")
     existing_title = st.text_input("Enter Existing Product Title:")
     existing_bullets = st.text_area("Enter Existing Bullet Points / Features:")
     existing_desc = st.text_area("Enter Existing Product Description:")
     
+    if audit_imgs:
+        if len(audit_imgs) > 4:
+            audit_imgs = audit_imgs[:4]
+        cols_a = st.columns(len(audit_imgs))
+        opened_audit_images = []
+        for i, file in enumerate(audit_imgs):
+            img = Image.open(file)
+            opened_audit_images.append(img)
+            with cols_a[i]:
+                st.image(img, caption=f"Audit View {i+1}", use_container_width=True)
+
     if st.button("🔍 Audit & Optimize Listing") and existing_title:
         if not gemini_api_key:
             st.warning("⚠️ Kripya pehle Gemini API Key configure karein.")
@@ -108,7 +132,7 @@ elif app_mode == "Listing Audit & Optimization Tool":
                     model = get_working_model()
                     audit_payload = [
                         f"""Act as a Senior E-Commerce Marketplace Auditor & SEO Expert for Amazon, Flipkart, and Meesho.
-                        Analyze the following existing listing along with the uploaded product image:
+                        Analyze the following existing listing along with the uploaded product images:
                         - Title: {existing_title}
                         - Bullet Points: {existing_bullets}
                         - Description: {existing_desc}
@@ -118,9 +142,8 @@ elif app_mode == "Listing Audit & Optimization Tool":
                         2. **Marketplace-wise Recommendations:** Specific improvements for Amazon, Flipkart, and Meesho.
                         3. **Optimized Rewrite:** Fully rewritten, high-converting SEO optimized Title, Bullet Points, and Description.""",
                     ]
-                    if audit_img:
-                        img = Image.open(audit_img)
-                        audit_payload.append(img)
+                    if 'opened_audit_images' in locals() and opened_audit_images:
+                        audit_payload.extend(opened_audit_images)
                         
                     response = model.generate_content(audit_payload)
                     st.markdown("### 📈 Audit Report & Optimized Content")
@@ -129,32 +152,46 @@ elif app_mode == "Listing Audit & Optimization Tool":
                     st.error(f"Audit Error: {e}")
 
 # ==========================================
-# MODE 3: BULK CSV CATALOG GENERATOR (FIXED & FUNCTIONAL)
+# MODE 3: BULK CSV CATALOG GENERATOR (WITH IMAGE UPLOAD)
 # ==========================================
 elif app_mode == "Bulk CSV Catalog Generator":
-    st.title("📁 Bulk CSV Catalog & Listing Generator")
-    st.markdown("Multiple products ke liye ek sath SEO optimized listings aur CSV format generate karein.")
+    st.title("📁 Bulk CSV Catalog & Listing Generator (With Image Support)")
+    st.markdown("Multiple products ke liye reference images upload karein aur ek sath SEO optimized listings aur CSV format generate karein.")
     
+    bulk_imgs = st.file_uploader("Upload Bulk Reference Garment Images (Max 5)", type=["jpg", "jpeg", "png"], accept_multiple_files=True, key="bulk_imgs")
     categories_input = st.text_area("Enter Product Categories / Items (one per line):", "Designer Silk Saree\nEmbroidered Kurti Set\nFestive Lehenga Choli")
     
+    if bulk_imgs:
+        if len(bulk_imgs) > 5:
+            bulk_imgs = bulk_imgs[:5]
+        cols_b = st.columns(len(bulk_imgs))
+        opened_bulk_images = []
+        for i, file in enumerate(bulk_imgs):
+            img = Image.open(file)
+            opened_bulk_images.append(img)
+            with cols_b[i]:
+                st.image(img, caption=f"Bulk Ref {i+1}", use_container_width=True)
+
     if st.button("Generate Bulk CSV Data"):
         if not gemini_api_key:
             st.warning("⚠️ Kripya pehle Gemini API Key configure karein.")
         else:
-            with st.spinner("Generating bulk catalog data..."):
+            with st.spinner("Generating bulk catalog data based on categories and images..."):
                 try:
                     model = get_working_model()
-                    prompt = f"""
-                    Generate bulk e-commerce catalog data for the following categories:
-                    {categories_input}
-                    
-                    Return a clean table or structured list with columns: Product_Name, Amazon_Title, Flipkart_Title, Bullet_Points, Keywords, Price_Range.
-                    """
-                    response = model.generate_content(prompt)
+                    bulk_prompt = [
+                        f"""Generate bulk e-commerce catalog data for the following categories:
+                        {categories_input}
+                        
+                        Return a clean structured analysis with Amazon A9/A10 titles, Flipkart attributes, bullet points, and trending high-search keywords.""",
+                    ]
+                    if 'opened_bulk_images' in locals() and opened_bulk_images:
+                        bulk_prompt.extend(opened_bulk_images)
+                        
+                    response = model.generate_content(bulk_prompt)
                     st.markdown("### 📋 Generated Bulk Data")
                     st.write(response.text)
                     
-                    # Dummy CSV download handler
                     df_dummy = pd.DataFrame({
                         "Category": categories_input.split("\n"),
                         "Status": ["Ready for Marketplace"] * len(categories_input.split("\n"))
@@ -170,7 +207,7 @@ elif app_mode == "Bulk CSV Catalog Generator":
                     st.error(f"Error: {e}")
 
 # ==========================================
-# MODE 4: PROFIT MARGIN & COMMISSION CALCULATOR (FIXED & FUNCTIONAL)
+# MODE 4: PROFIT MARGIN & COMMISSION CALCULATOR
 # ==========================================
 elif app_mode == "Profit Margin & Commission Calculator":
     st.title("💰 E-Commerce Profit Margin & Commission Calculator")
@@ -187,7 +224,6 @@ elif app_mode == "Profit Margin & Commission Calculator":
     platform = st.selectbox("Select Marketplace:", ["Amazon India", "Flipkart", "Meesho"])
     
     if st.button("Calculate Net Profit"):
-        # Marketplace commission estimation logic
         commission_rate = 0.15 if platform == "Amazon India" else (0.12 if platform == "Flipkart" else 0.08)
         referral_fee = selling_price * commission_rate
         gst_on_fee = referral_fee * 0.18
