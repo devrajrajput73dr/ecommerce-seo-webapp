@@ -58,11 +58,11 @@ def safe_generate_content(model, contents, retries=3, delay=10):
             raise e
 
 # ==========================================
-# MODE 1: SINGLE LISTING & SEO GENERATOR (WITH PRODUCT ANALYSIS SECTION)
+# MODE 1: SINGLE LISTING & SEO GENERATOR
 # ==========================================
 if app_mode == "Single Listing & SEO Generator":
     st.title("📦 Multi-Platform SEO Listing Generator (Multiple Images)")
-    st.markdown("Garment ki 3-4 alag-alag angles ki images upload karein aur Amazon A9/A10, Flipkart, aur Meesho algorithms ke liye high-converting SEO content generate karein.")
+    st.markdown("Garment ki 3-4 alag-alag angles ki images upload karein aur Amazon A9/A10, Flipkart, aur Meesho algorithms ke liye complete SEO content generate karein.")
     
     uploaded_listing_imgs = st.file_uploader("Upload Product/Garment Images (Max 4 angles)", type=["jpg", "jpeg", "png"], accept_multiple_files=True, key="single_listing_imgs")
     product_name = st.text_input("Enter Product Name / Category (e.g., Designer Silk Saree):")
@@ -86,7 +86,7 @@ if app_mode == "Single Listing & SEO Generator":
         if not gemini_api_key:
             st.warning("⚠️ Kripya pehle Gemini API Key configure karein.")
         else:
-            with st.spinner("Analyzing product images, extracting attributes, and generating SEO content..."):
+            with st.spinner("Analyzing product images, extracting attributes, and generating complete multi-platform listings..."):
                 try:
                     model = get_working_model()
                     
@@ -108,27 +108,30 @@ if app_mode == "Single Listing & SEO Generator":
                     st.markdown("### 🏷️ Step 1: Garment & Product Analysis Breakdown")
                     st.info(analysis_response.text)
                     
-                    # Step 2: Multi-Platform SEO Listing
+                    # Step 2: Comprehensive Multi-Platform SEO Listing (Ensuring Title, Description, Bullet Points, and Search Keywords for ALL platforms)
                     seo_prompt = [
-                        f"""Based on the garment analysis and product details for '{product_name}', act as an E-commerce SEO Expert for Amazon (A9/A10), Flipkart, and Meesho algorithms.
-                        Provide high-converting optimized content for:
-                        1. Amazon A9/A10 Optimized Title & Backend Keywords.
-                        2. High-converting Bullet Points.
-                        3. Flipkart Algorithm optimized description & attributes.
-                        4. Meesho Prism Algorithm trendy description & budget focus.""",
+                        f"""Based on the garment analysis and product details for '{product_name}', act as an E-commerce Senior SEO Expert for Amazon (A9/A10), Flipkart, and Meesho algorithms.
+                        
+                        You MUST provide separate, fully detailed, and high-converting sections for EACH of the three platforms. Every platform section must strictly contain:
+                        1. **Title** (Optimized with high-search keywords)
+                        2. **Bullet Points / Key Features** (Conversion-focused highlights)
+                        3. **Product Description** (Detailed rich description)
+                        4. **Search Keywords / Backend Keywords** (High-volume searchable terms)
+                        
+                        Structure your output clearly with headings for Amazon India, Flipkart, and Meesho Prism respectively.""",
                     ]
                     if 'opened_listing_images' in locals() and opened_listing_images:
                         seo_prompt.extend(opened_listing_images)
                         
                     seo_response = safe_generate_content(model, seo_prompt)
-                    st.markdown("### 📊 Step 2: Generated Multi-Platform SEO Content")
+                    st.markdown("### 📊 Step 2: Complete Multi-Platform SEO Content (Amazon, Flipkart, Meesho)")
                     st.write(seo_response.text)
                     
                 except Exception as e:
                     st.error(f"Error: {e}")
 
 # ==========================================
-# MODE 2: LISTING AUDIT & OPTIMIZATION TOOL (WITH MULTIPLE IMAGES)
+# MODE 2: LISTING AUDIT & OPTIMIZATION TOOL
 # ==========================================
 elif app_mode == "Listing Audit & Optimization Tool":
     st.title("🔍 E-Commerce Listing Audit & Optimization")
@@ -171,7 +174,7 @@ elif app_mode == "Listing Audit & Optimization Tool":
                         Please provide:
                         1. **Audit Score & Weaknesses:** What is missing in terms of high-search keywords and algorithm ranking factors?
                         2. **Marketplace-wise Recommendations:** Specific improvements for Amazon, Flipkart, and Meesho.
-                        3. **Optimized Rewrite:** Fully rewritten, high-converting SEO optimized Title, Bullet Points, and Description.""",
+                        3. **Optimized Rewrite:** Fully rewritten, high-converting SEO optimized Title, Bullet Points, Description, and Search Keywords for Amazon, Flipkart, and Meesho.""",
                     ]
                     if 'opened_audit_images' in locals() and opened_audit_images:
                         audit_payload.extend(opened_audit_images)
@@ -183,7 +186,7 @@ elif app_mode == "Listing Audit & Optimization Tool":
                     st.error(f"Audit Error: {e}")
 
 # ==========================================
-# MODE 3: BULK CSV CATALOG GENERATOR (WITH IMAGE UPLOAD)
+# MODE 3: BULK CSV CATALOG GENERATOR
 # ==========================================
 elif app_mode == "Bulk CSV Catalog Generator":
     st.title("📁 Bulk CSV Catalog & Listing Generator (With Image Support)")
@@ -214,7 +217,7 @@ elif app_mode == "Bulk CSV Catalog Generator":
                         f"""Generate bulk e-commerce catalog data for the following categories:
                         {categories_input}
                         
-                        Return a clean structured analysis with Amazon A9/A10 titles, Flipkart attributes, bullet points, and trending high-search keywords considering all garment attributes.""",
+                        Return a clean structured analysis with complete Titles, Bullet Points, Descriptions, and Search Keywords for Amazon, Flipkart, and Meesho.""",
                     ]
                     if 'opened_bulk_images' in locals() and opened_bulk_images:
                         bulk_prompt.extend(opened_bulk_images)
@@ -274,7 +277,7 @@ elif app_mode == "Profit Margin & Commission Calculator":
             st.warning("⚠️ Is price par aapko loss ho sakta hai. Selling price badhayein ya cost kam karein.")
 
 # ==========================================
-# MODE 5: AI VIRTUAL MODEL STUDIO (ONE BY ONE GENERATION)
+# MODE 5: AI VIRTUAL MODEL STUDIO
 # ==========================================
 elif app_mode == "AI Virtual Model Studio (Gemini Powered)":
     st.title("👗 AI Virtual Model Studio (One-by-One Generation & Download)")
