@@ -6,7 +6,6 @@ import urllib.parse
 import time
 import requests
 import pandas as pd
-from pypdf import PdfReader
 
 # Page Configuration
 st.set_page_config(
@@ -373,7 +372,7 @@ elif app_mode == "Smart Shipping Label Cropper & Sorter":
     st.title("✂️ Smart Shipping Label Cropper & Thermal Converter")
     st.markdown("""
     <div style="background-color: #f0f2f6; padding: 10px; border-radius: 8px; margin-bottom: 15px;">
-    <b>Advanced E-Commerce Tool:</b> Multiple shipping label PDFs ya images yahan upload karein. Yeh tool invoices ko remove karega, thermal 4x6 size me process karega, delivery partners ke hisaab se sort karega aur direct download button dega.
+    <b>Advanced E-Commerce Tool:</b> Multiple shipping label PDFs ya images yahan upload karein. Yeh tool invoices ko analyze karega, delivery partners ke hisaab se sort karega aur SKU pick-list summary banayega.
     </div>
     """, unsafe_allow_html=True)
     
@@ -388,35 +387,24 @@ elif app_mode == "Smart Shipping Label Cropper & Sorter":
         st.markdown(f"### 📄 Uploaded Files Count: {len(label_files)}")
         
         gemini_payload_parts = []
-        file_summaries = []
-        
         for file in label_files:
             file_bytes = file.getvalue()
             if file.type == "application/pdf":
-                st.info(f"📂 PDF Loaded: {file.name} ({file.size / 1024:.1f} KB)")
+                st.info(f"📂 PDF Loaded Successfully: {file.name} ({file.size / 1024:.1f} KB)")
                 gemini_payload_parts.append({
                     "mime_type": "application/pdf",
                     "data": file_bytes
                 })
-                # Read PDF text using pypdf for summary report
-                try:
-                    reader = PdfReader(io.BytesIO(file_bytes))
-                    extracted_text = ""
-                    for page in reader.pages:
-                        extracted_text += page.extract_text() or ""
-                    file_summaries.append((file.name, extracted_text[:300]))
-                except Exception as ex:
-                    file_summaries.append((file.name, "PDF loaded successfully"))
             else:
                 img = Image.open(file)
+                st.image(img, caption=f"Image: {file.name}", width=300)
                 gemini_payload_parts.append(img)
-                file_summaries.append((file.name, "Image file loaded"))
                 
         if not gemini_api_key:
             st.warning("⚠️ Kripya pehle sidebar mein Gemini API Key enter karein.")
         else:
-            if st.button("🚀 Process, Analyze & Sort by Partner"):
-                with st.spinner("Analyzing shipping label files, stripping invoices, and sorting by partner & SKU..."):
+            if st.button("🚀 Process, Analyze & Sort by Partner / SKU"):
+                with st.spinner("Analyzing shipping label files via Gemini AI, filtering invoices, and sorting by partner & SKU..."):
                     try:
                         model = get_working_model()
                         cropper_prompt = [
@@ -427,8 +415,9 @@ elif app_mode == "Smart Shipping Label Cropper & Sorter":
                             1. **Invoice & Margin Removal:** Identify and separate tax invoice sections from the actual logistics shipping label.
                             2. **Delivery Partner Detection:** Automatically classify each label based on courier logos/text (e.g., Flipkart Ekart, Amazon Shipping, Delhivery, Shadowfax, Xpressbees, Valmo/Meesho).
                             3. **SKU-wise Sorting & Pick-List Summary:** Group orders by SKU/Item and provide a consolidated pick-list summary.
+                            4. **Thermal 4x6 Layout Instructions:** Provide exact formatting details for thermal printing.
                             
-                            Provide clean structured output with clear headings for Partner Sorting and SKU Pick-list Summary.""",
+                            Provide clean structured output with clear headings for Partner Sorting, SKU Pick-list Summary, and Cropping Instructions.""",
                         ]
                         cropper_payload = cropper_prompt + gemini_payload_parts
                             
@@ -436,6 +425,6 @@ elif app_mode == "Smart Shipping Label Cropper & Sorter":
                         st.markdown("### 📊 Smart Label Sorting & Analysis Report")
                         st.write(response.text)
                         
-                        st.success("✅ Multi-PDF/Image analysis completed successfully!")
+                        st.success("✅ Files successfully processed and sorted by courier partner & SKU!")
                     except Exception as e:
                         st.error(f"Processing Error: {e}")
