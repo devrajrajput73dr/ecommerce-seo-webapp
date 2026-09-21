@@ -43,9 +43,6 @@ def get_working_model(is_image=False):
                 return genai.GenerativeModel(m.name)
     return genai.GenerativeModel('gemini-2.5-flash')
 
-# Function to generate image using Hugging Face Free Inference API
-from huggingface_hub import InferenceClient
-
 # Function to generate image using Hugging Face Official Client
 def generate_hf_image(prompt_text, hf_token):
     try:
