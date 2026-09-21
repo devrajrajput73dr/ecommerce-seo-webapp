@@ -2,14 +2,16 @@ import streamlit as st
 import google.generativeai as genai
 from PIL import Image
 import io
+import urllib.parse
+import time
+import requests
 
-# Yeh Streamlit ki sabse pehli command honi chahiye
+# Corrected Page Configuration (layout instead of page_layout)
 st.set_page_config(
     page_title="E-Commerce Elite SEO & AI Virtual Model Studio",
-    page_layout="wide",
+    layout="wide",
     initial_sidebar_state="expanded"
 )
-
 
 # Sidebar Navigation
 st.sidebar.markdown("## 🛠️ E-Commerce Suite Navigation")
@@ -32,22 +34,12 @@ if gemini_api_key:
     genai.configure(api_key=gemini_api_key)
 
 def get_working_model(is_image=False):
-    if is_image:
-        return genai.GenerativeModel('gemini-2.5-flash')
-    else:
-        return genai.GenerativeModel('gemini-2.5-flash')
-
-# ==========================================
-# MODE 1: SINGLE LISTING & SEO GENERATOR
-# ==========================================
-if app_mode == "Single Jurisdiction / Single Listing & SEO Generator":
-    # (Existing or placeholder for single listing)
-    pass
+    return genai.GenerativeModel('gemini-2.5-flash')
 
 # ==========================================
 # MODE 5: AI VIRTUAL MODEL STUDIO (5-6 VARIATIONS & INDIVIDUAL DOWNLOAD)
 # ==========================================
-elif app_mode == "AI Virtual Model Studio (Gemini Powered)":
+if app_mode == "AI Virtual Model Studio (Gemini Powered)":
     st.title("👗 AI Virtual Model Studio (5-6 Variations & Individual Downloads)")
     st.markdown("""
     <div style="background-color: #f0f2f6; padding: 10px; border-radius: 8px; margin-bottom: 15px;">
@@ -102,7 +94,6 @@ elif app_mode == "AI Virtual Model Studio (Gemini Powered)":
                 ]
             )
             
-            # 5-6 Distinct Environments/Backgrounds Defined Here
             environments = {
                 "1. E-Commerce Pure White Studio": "Professional e-commerce catalog studio photography, 100% pure white background, bright studio softbox lighting, high conversion layout",
                 "2. Lush Green Garden Outdoor": "Outdoor natural lifestyle setting, botanical garden background, soft natural sunlight, high-end catalog look",
@@ -115,15 +106,9 @@ elif app_mode == "AI Virtual Model Studio (Gemini Powered)":
             if st.button("🚀 Generate All 6 Catalog Variations"):
                 with st.spinner("Generating 6 professional variations with locked garment details... This may take a moment."):
                     try:
-                        import urllib.parse
-                        import time
-                        import requests
-                        import io
-                        
                         model = get_working_model(is_image=False)
                         st.success("🎉 All 6 Variations Generated Successfully! Aap niche har image ko alag-alag download kar sakte hain:")
                         
-                        # Loop through all 6 environments and render them with individual download buttons
                         for idx, (env_name, env_style) in enumerate(environments.items(), 1):
                             st.markdown(f"### Variation {idx}: {env_name}")
                             
@@ -141,14 +126,12 @@ elif app_mode == "AI Virtual Model Studio (Gemini Powered)":
                             seed_val = int(time.time()) + idx
                             target_url = f"https://pollinations.ai/p/{encoded_prompt}?width=768&height=1024&nologo=true&seed={seed_val}"
                             
-                            # Fetch and render securely via bytes to ensure smooth display
                             try:
                                 img_resp = requests.get(target_url, timeout=30)
                                 if img_resp.status_code == 200:
                                     image_bytes = io.BytesIO(img_resp.content)
                                     st.image(image_bytes, caption=f"{env_name}", use_container_width=True)
                                     
-                                    # One-by-one individual download button
                                     st.download_button(
                                         label=f"📥 Download Variation {idx} ({env_name.split('.')[1].strip()})",
                                         data=img_resp.content,
@@ -169,4 +152,3 @@ elif app_mode == "AI Virtual Model Studio (Gemini Powered)":
 else:
     if not gemini_api_key:
         st.warning("⚠️ Kripya pehle sidebar mein apni Gemini API Key enter karein.")
-        
