@@ -58,32 +58,7 @@ def safe_generate_content(model, contents, retries=3, delay=10):
             raise e
 
 # ==========================================
-# MASTER GARMENT & PLATFORM ATTRIBUTES GUIDE SECTION
-# ==========================================
-st.markdown("""
-# 👑 E-Commerce Garment & Multi-Platform Master Guide
-<div style="background-color: #f8f9fa; padding: 15px; border-radius: 10px; border-left: 5px solid #ff9900; margin-bottom: 20px;">
-<h3>📌 Complete Garment & Marketplace Attributes Reference</h3>
-<p>Yeh section sabhi garments aur e-commerce platforms ke core parameters ko define karta hai:</p>
-
-<ul>
-    <li><b>Garment Core Attributes:</b>
-        <ul>
-            <li><b>Design Type & Style:</b> Ethnic, Western, Indo-Western, Anarkali, Straight Cut, A-Line, Kanjivaram, Banarasi, Designer, Casual, Party Wear.</li>
-            <li><b>Print & Pattern Type:</b> Floral Print, Block Print, Digital Print, Foil Print, Embroidered, Zari Work, Sequins, Handloom Weave, Solid, Tie-Dye.</li>
-            <li><b>Occasion:</b> Festive, Wedding, Party, Casual Daily Wear, Office Wear, Ceremonial, Traditional.</li>
-            <li><b>Color & Fabric Quality:</b> Exact shade matching (Primary/Secondary color), Pure Silk, Georgette, Cotton, Chiffon, Organza, Velvet with GSM/Quality grade.</li>
-        </ul>
-    </li>
-    <li><b>Amazon A9/A10 Algorithm Attributes:</b> High search volume backend keywords, conversion-focused bullet points, exact match keyword density, clear dimensions and material specifications.</li>
-    <li><b>Flipkart Algorithm Attributes:</b> Catalog clarity, value propositions, key technical specs, high-search category attributes, competitive pricing indicators.</li>
-    <li><b>Meesho Prism Algorithm Attributes:</b> Budget focus, trendy visual appeal, regional catalog tags, low-price high-conversion positioning, simplified descriptors for mass buyers.</li>
-</ul>
-</div>
-""", unsafe_allow_html=True)
-
-# ==========================================
-# MODE 1: SINGLE LISTING & SEO GENERATOR (MULTIPLE IMAGES)
+# MODE 1: SINGLE LISTING & SEO GENERATOR (WITH PRODUCT ANALYSIS SECTION)
 # ==========================================
 if app_mode == "Single Listing & SEO Generator":
     st.title("📦 Multi-Platform SEO Listing Generator (Multiple Images)")
@@ -111,26 +86,44 @@ if app_mode == "Single Listing & SEO Generator":
         if not gemini_api_key:
             st.warning("⚠️ Kripya pehle Gemini API Key configure karein.")
         else:
-            with st.spinner("Analyzing multiple images and generating SEO optimized content (with auto-retry)..."):
+            with st.spinner("Analyzing product images, extracting attributes, and generating SEO content..."):
                 try:
                     model = get_working_model()
-                    content_prompt = [
-                        f"""Act as an E-commerce SEO Expert for Amazon (A9/A10), Flipkart, and Meesho algorithms.
-                        Product Name: {product_name}
-                        Additional Details: {key_features}
+                    
+                    # Step 1: Product Analysis (Design Type, Print Type, Occasion, Color)
+                    analysis_prompt = [
+                        f"""Analyze the uploaded product images and details for '{product_name}'. 
+                        Provide a structured breakdown of the following core attributes:
+                        - **Design Type & Style:** (e.g., Ethnic, Anarkali, Straight Cut, Kanjivaram, etc.)
+                        - **Print & Pattern Type:** (e.g., Floral Print, Block Print, Embroidered, Zari Work, Solid, etc.)
+                        - **Occasion:** (e.g., Festive, Wedding, Party, Casual Daily Wear, etc.)
+                        - **Color & Fabric Quality:** (Primary/Secondary color shade, fabric type and quality grade)""",
+                    ]
+                    if 'opened_listing_images' in locals() and opened_listing_images:
+                        analysis_prompt.extend(opened_listing_images)
                         
-                        Please analyze the uploaded product images (different angles) and details keeping all garment attributes (Design, Style, Print, Occasion, Color) in mind to provide:
+                    analysis_response = safe_generate_content(model, analysis_prompt)
+                    
+                    st.markdown("---")
+                    st.markdown("### 🏷️ Step 1: Garment & Product Analysis Breakdown")
+                    st.info(analysis_response.text)
+                    
+                    # Step 2: Multi-Platform SEO Listing
+                    seo_prompt = [
+                        f"""Based on the garment analysis and product details for '{product_name}', act as an E-commerce SEO Expert for Amazon (A9/A10), Flipkart, and Meesho algorithms.
+                        Provide high-converting optimized content for:
                         1. Amazon A9/A10 Optimized Title & Backend Keywords.
                         2. High-converting Bullet Points.
                         3. Flipkart Algorithm optimized description & attributes.
                         4. Meesho Prism Algorithm trendy description & budget focus.""",
                     ]
                     if 'opened_listing_images' in locals() and opened_listing_images:
-                        content_prompt.extend(opened_listing_images)
+                        seo_prompt.extend(opened_listing_images)
                         
-                    response = safe_generate_content(model, content_prompt)
-                    st.markdown("### 📊 Generated Multi-Platform SEO Content")
-                    st.write(response.text)
+                    seo_response = safe_generate_content(model, seo_prompt)
+                    st.markdown("### 📊 Step 2: Generated Multi-Platform SEO Content")
+                    st.write(seo_response.text)
+                    
                 except Exception as e:
                     st.error(f"Error: {e}")
 
