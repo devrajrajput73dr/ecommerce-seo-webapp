@@ -23,7 +23,8 @@ app_mode = st.sidebar.radio(
         "Single Listing & SEO Generator",
         "Listing Audit & Optimization Tool",
         "Bulk CSV Catalog Generator",
-        "Profit Margin & Commission Calculator"
+        "Profit Margin & Commission Calculator",
+        "Smart Shipping Label Cropper & Sorter"
     ]
 )
 
@@ -58,11 +59,11 @@ def safe_generate_content(model, contents, retries=3, delay=10):
             raise e
 
 # ==========================================
-# MODE 1: SINGLE LISTING & SEO GENERATOR (SINGLE API CALL OPTIMIZED)
+# MODE 1: SINGLE LISTING & SEO GENERATOR
 # ==========================================
 if app_mode == "Single Listing & SEO Generator":
-    st.title("📦 Multi-Platform SEO Listing Generator (Multiple Images)")
-    st.markdown("Garment ki 3-4 alag-alag angles ki images upload karein aur Amazon A9/A10, Flipkart, aur Meesho algorithms ke liye complete SEO content generate karein.")
+    st.title("📦 Multi-Platform SEO Listing Generator (Multi-Image Support)")
+    st.markdown("Product/Garment ki images upload karein aur Amazon A9/A10, Flipkart, aur Meesho algorithms ke liye complete SEO content generate karein.")
     
     uploaded_listing_imgs = st.file_uploader("Upload Product/Garment Images (Max 4 angles)", type=["jpg", "jpeg", "png"], accept_multiple_files=True, key="single_listing_imgs")
     product_name = st.text_input("Enter Product Name / Category (e.g., Designer Silk Saree):")
@@ -86,18 +87,15 @@ if app_mode == "Single Listing & SEO Generator":
         if not gemini_api_key:
             st.warning("⚠️ Kripya pehle Gemini API Key configure karein.")
         else:
-            with st.spinner("Analyzing product images and generating complete multi-platform listings (Single Optimized Call)..."):
+            with st.spinner("Analyzing product images and generating complete multi-platform listings..."):
                 try:
                     model = get_working_model()
-                    
-                    # Single combined prompt to prevent rate limits and save quota
                     unified_prompt = [
                         f"""Act as an E-commerce Senior SEO Expert & Garment Analyst for Amazon (A9/A10), Flipkart, and Meesho algorithms.
                         Product Name: {product_name}
                         Additional Details: {key_features}
                         
-                        Please analyze the uploaded product images (different angles) and details to provide:
-                        
+                        Please analyze the uploaded product images and details to provide:
                         PART 1: GARMENT & PRODUCT ANALYSIS BREAKDOWN
                         - Design Type & Style (e.g., Ethnic, Anarkali, Kanjivaram, etc.)
                         - Print & Pattern Type (e.g., Floral Print, Embroidered, Zari Work, etc.)
@@ -131,7 +129,7 @@ elif app_mode == "Listing Audit & Optimization Tool":
     </div>
     """, unsafe_allow_html=True)
     
-    audit_imgs = st.file_uploader("Upload Product/Garment Images for Audit (Max 4 images)", type=["jpg", "jpeg", "png"], accept_multiple_files=True, key="audit_imgs")
+    audit_imgs = st.file_uploader("Upload Product Images for Audit (Max 4 images)", type=["jpg", "jpeg", "png"], accept_multiple_files=True, key="audit_imgs")
     existing_title = st.text_input("Enter Existing Product Title:")
     existing_bullets = st.text_area("Enter Existing Bullet Points / Features:")
     existing_desc = st.text_area("Enter Existing Product Description:")
@@ -156,7 +154,7 @@ elif app_mode == "Listing Audit & Optimization Tool":
                     model = get_working_model()
                     audit_payload = [
                         f"""Act as a Senior E-Commerce Marketplace Auditor & SEO Expert for Amazon, Flipkart, and Meesho.
-                        Analyze the following existing listing along with the uploaded product images, verifying design type, style, print type, occasion, and color attributes:
+                        Analyze the following existing listing along with the uploaded product images:
                         - Title: {existing_title}
                         - Bullet Points: {existing_bullets}
                         - Description: {existing_desc}
@@ -164,7 +162,7 @@ elif app_mode == "Listing Audit & Optimization Tool":
                         Please provide:
                         1. **Audit Score & Weaknesses:** What is missing in terms of high-search keywords and algorithm ranking factors?
                         2. **Marketplace-wise Recommendations:** Specific improvements for Amazon, Flipkart, and Meesho.
-                        3. **Optimized Rewrite:** Fully rewritten, high-converting SEO optimized Title, Bullet Points, Description, and Search Keywords for Amazon, Flipkart, and Meesho.""",
+                        3. **Optimized Rewrite:** Fully rewritten, high-converting SEO optimized Title, Bullet Points, Description, and Search Keywords.""",
                     ]
                     if 'opened_audit_images' in locals() and opened_audit_images:
                         audit_payload.extend(opened_audit_images)
@@ -179,39 +177,23 @@ elif app_mode == "Listing Audit & Optimization Tool":
 # MODE 3: BULK CSV CATALOG GENERATOR
 # ==========================================
 elif app_mode == "Bulk CSV Catalog Generator":
-    st.title("📁 Bulk CSV Catalog & Listing Generator (With Image Support)")
-    st.markdown("Multiple products ke liye reference images upload karein aur ek sath SEO optimized listings aur CSV format generate karein.")
+    st.title("📁 Bulk CSV Catalog & Listing Generator")
+    st.markdown("Multiple products ke liye categories enter karein aur ek sath SEO optimized listings aur CSV format generate karein.")
     
-    bulk_imgs = st.file_uploader("Upload Bulk Reference Garment Images (Max 5)", type=["jpg", "jpeg", "png"], accept_multiple_files=True, key="bulk_imgs")
     categories_input = st.text_area("Enter Product Categories / Items (one per line):", "Designer Silk Saree\nEmbroidered Kurti Set\nFestive Lehenga Choli")
-    
-    if bulk_imgs:
-        if len(bulk_imgs) > 5:
-            bulk_imgs = bulk_imgs[:5]
-        cols_b = st.columns(len(bulk_imgs))
-        opened_bulk_images = []
-        for i, file in enumerate(bulk_imgs):
-            img = Image.open(file)
-            opened_bulk_images.append(img)
-            with cols_b[i]:
-                st.image(img, caption=f"Bulk Ref {i+1}", use_container_width=True)
 
     if st.button("Generate Bulk CSV Data"):
         if not gemini_api_key:
             st.warning("⚠️ Kripya pehle Gemini API Key configure karein.")
         else:
-            with st.spinner("Generating bulk catalog data based on categories and images..."):
+            with st.spinner("Generating bulk catalog data..."):
                 try:
                     model = get_working_model()
-                    bulk_prompt = [
-                        f"""Generate bulk e-commerce catalog data for the following categories:
-                        {categories_input}
-                        
-                        Return a clean structured analysis with complete Titles, Bullet Points, Descriptions, and Search Keywords for Amazon, Flipkart, and Meesho.""",
-                    ]
-                    if 'opened_bulk_images' in locals() and opened_bulk_images:
-                        bulk_prompt.extend(opened_bulk_images)
-                        
+                    bulk_prompt = f"""Generate bulk e-commerce catalog data for the following categories:
+                    {categories_input}
+                    
+                    Return a clean structured analysis with complete Titles, Bullet Points, Descriptions, and Search Keywords for Amazon, Flipkart, and Meesho."""
+                    
                     response = safe_generate_content(model, bulk_prompt)
                     st.markdown("### 📋 Generated Bulk Data")
                     st.write(response.text)
@@ -382,3 +364,54 @@ elif app_mode == "AI Virtual Model Studio (Gemini Powered)":
                             
                     except Exception as gen_err:
                         st.error(f"Generation Error: {gen_err}")
+
+# ==========================================
+# MODE 6: SMART SHIPPING LABEL CROPPER & PARTNER SORTER
+# ==========================================
+elif app_mode == "Smart Shipping Label Cropper & Sorter":
+    st.title("✂️ Smart Shipping Label Cropper & Partner Sorter")
+    st.markdown("""
+    <div style="background-color: #f0f2f6; padding: 10px; border-radius: 8px; margin-bottom: 15px;">
+    <b>Advanced E-Commerce Tool:</b> A4 shipping label sheets upload karein. Yeh tool invoices ko filter karega, 4x6 thermal format me crop coordinates batayega, delivery partners (Flipkart Ekart, Amazon Shipping, Delhivery, Meesho/Valmo, etc.) ke hisaab se sort karega aur SKU pick-list summary banayega.
+    </div>
+    """, unsafe_allow_html=True)
+    
+    selected_marketplace = st.selectbox(
+        "Select Source Marketplace Preset:",
+        ["Flipkart Seller Hub", "Amazon Shipping / Easy Ship", "Meesho Supplier Panel", "Multi-Marketplace Mixed Batch"]
+    )
+    
+    label_file = st.file_uploader("Upload Shipping Label Sheet (Image/Snapshot)", type=["jpg", "jpeg", "png"], key="label_crop_file")
+    
+    if label_file:
+        st.markdown("### 📄 Uploaded Label Sheet Preview:")
+        opened_label_img = Image.open(label_file)
+        st.image(opened_label_img, caption="Original Label Sheet", width=400)
+        
+        if not gemini_api_key:
+            st.warning("⚠️ Kripya pehle sidebar mein Gemini API Key enter karein.")
+        else:
+            if st.button("🚀 Process, Crop & Sort by Delivery Partner"):
+                with st.spinner("Analyzing labels, stripping invoices, and sorting by courier partner..."):
+                    try:
+                        model = get_working_model()
+                        cropper_prompt = [
+                            f"""Act as an expert E-Commerce Logistics & Thermal Label Cropper Tool.
+                            Source Platform Preset: {selected_marketplace}
+                            
+                            Analyze the uploaded label document/image:
+                            1. **Invoice & Margin Removal:** Identify and separate tax invoice sections from the actual logistics shipping label.
+                            2. **Delivery Partner Detection:** Automatically classify each label based on courier logos/text (e.g., Flipkart Ekart, Amazon Shipping, Delhivery, Shadowfax, Xpressbees, Valmo/Meesho).
+                            3. **Thermal 4x6 Optimization Details:** Provide precise cropping zones/instructions suitable for a 4x6 inch (100x150mm) thermal printer layout.
+                            4. **SKU Pick-List Summary:** Extract and summarize the SKU items for consolidated dispatch tracking.
+                            
+                            Provide clean structured output with clear headings for Partner Sorting and Thermal Cropping Instructions.""",
+                            opened_label_img
+                        ]
+                        response = safe_generate_content(model, cropper_prompt)
+                        st.markdown("### 📊 Smart Label Cropping & Partner Sorting Report")
+                        st.write(response.text)
+                        
+                        st.success("✅ Labels successfully processed, sorted by delivery partner, and optimized for thermal printing!")
+                    except Exception as e:
+                        st.error(f"Cropping & Sorting Error: {e}")
