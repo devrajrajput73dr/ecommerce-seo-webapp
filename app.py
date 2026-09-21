@@ -372,7 +372,7 @@ elif app_mode == "Smart Shipping Label Cropper & Sorter":
     st.title("✂️ Smart Shipping Label Cropper & Partner Sorter")
     st.markdown("""
     <div style="background-color: #f0f2f6; padding: 10px; border-radius: 8px; margin-bottom: 15px;">
-    <b>Advanced E-Commerce Tool:</b> A4 shipping label sheets upload karein. Yeh tool invoices ko filter karega, 4x6 thermal format me crop coordinates batayega, delivery partners (Flipkart Ekart, Amazon Shipping, Delhivery, Meesho/Valmo, etc.) ke hisaab se sort karega aur SKU pick-list summary banayega.
+    <b>Advanced E-Commerce Tool:</b> Shipping label PDFs ya images yahan upload karein. Yeh tool invoices ko filter karega, 4x6 thermal format me crop/split instructions dega, delivery partners ke hisaab se sort karega aur SKU pick-list summary banayega.
     </div>
     """, unsafe_allow_html=True)
     
@@ -381,37 +381,48 @@ elif app_mode == "Smart Shipping Label Cropper & Sorter":
         ["Flipkart Seller Hub", "Amazon Shipping / Easy Ship", "Meesho Supplier Panel", "Multi-Marketplace Mixed Batch"]
     )
     
-    label_file = st.file_uploader("Upload Shipping Label Sheet (Image/Snapshot)", type=["jpg", "jpeg", "png"], key="label_crop_file")
+    # Allowed PDF and image formats
+    label_files = st.file_uploader("Upload Shipping Label Files (PDF or Images)", type=["jpg", "jpeg", "png", "pdf"], accept_multiple_files=True, key="label_crop_files")
     
-    if label_file:
-        st.markdown("### 📄 Uploaded Label Sheet Preview:")
-        opened_label_img = Image.open(label_file)
-        st.image(opened_label_img, caption="Original Label Sheet", width=400)
+    if label_files:
+        st.markdown(f"### 📄 Uploaded Files Count: {len(label_files)}")
         
+        opened_label_contents = []
+        for file in label_files:
+            if file.type == "application/pdf":
+                st.info(f"📂 PDF Loaded: {file.name} ({file.size / 1024:.1f} KB)")
+                opened_label_contents.append(file)
+            else:
+                img = Image.open(file)
+                st.image(img, caption=f"Image: {file.name}", width=300)
+                opened_label_contents.append(img)
+                
         if not gemini_api_key:
             st.warning("⚠️ Kripya pehle sidebar mein Gemini API Key enter karein.")
         else:
-            if st.button("🚀 Process, Crop & Sort by Delivery Partner"):
-                with st.spinner("Analyzing labels, stripping invoices, and sorting by courier partner..."):
+            if st.button("🚀 Process, Crop & Sort by Delivery Partner / SKU"):
+                with st.spinner("Analyzing shipping label files, stripping invoices, and sorting by partner & SKU..."):
                     try:
                         model = get_working_model()
                         cropper_prompt = [
                             f"""Act as an expert E-Commerce Logistics & Thermal Label Cropper Tool.
                             Source Platform Preset: {selected_marketplace}
                             
-                            Analyze the uploaded label document/image:
+                            Analyze the uploaded shipping label document(s)/image(s):
                             1. **Invoice & Margin Removal:** Identify and separate tax invoice sections from the actual logistics shipping label.
                             2. **Delivery Partner Detection:** Automatically classify each label based on courier logos/text (e.g., Flipkart Ekart, Amazon Shipping, Delhivery, Shadowfax, Xpressbees, Valmo/Meesho).
-                            3. **Thermal 4x6 Optimization Details:** Provide precise cropping zones/instructions suitable for a 4x6 inch (100x150mm) thermal printer layout.
-                            4. **SKU Pick-List Summary:** Extract and summarize the SKU items for consolidated dispatch tracking.
+                            3. **SKU-wise Sorting & Pick-List Summary:** Group orders by SKU/Item and provide a consolidated pick-list summary for easy dispatch.
+                            4. **Thermal 4x6 Optimization Details:** Provide precise cropping zones/instructions suitable for a 4x6 inch (100x150mm) thermal printer layout.
                             
-                            Provide clean structured output with clear headings for Partner Sorting and Thermal Cropping Instructions.""",
-                            opened_label_img
+                            Provide clean structured output with clear headings for Partner Sorting, SKU Pick-list Summary, and Thermal Cropping Instructions.""",
                         ]
+                        for item in opened_label_contents:
+                            cropper_prompt.append(item)
+                            
                         response = safe_generate_content(model, cropper_prompt)
-                        st.markdown("### 📊 Smart Label Cropping & Partner Sorting Report")
+                        st.markdown("### 📊 Smart Label Cropping, SKU Summary & Partner Sorting Report")
                         st.write(response.text)
                         
-                        st.success("✅ Labels successfully processed, sorted by delivery partner, and optimized for thermal printing!")
+                        st.success("✅ Files successfully processed, sorted by courier partner & SKU!")
                     except Exception as e:
                         st.error(f"Cropping & Sorting Error: {e}")
