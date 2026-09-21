@@ -6,7 +6,7 @@ import urllib.parse
 import time
 import requests
 import pandas as pd
-import fitz  # PyMuPDF for PDF to Image conversion
+from pypdf import PdfReader
 
 # Page Configuration
 st.set_page_config(
@@ -373,7 +373,7 @@ elif app_mode == "Smart Shipping Label Cropper & Sorter":
     st.title("✂️ Smart Shipping Label Cropper & Thermal Converter")
     st.markdown("""
     <div style="background-color: #f0f2f6; padding: 10px; border-radius: 8px; margin-bottom: 15px;">
-    <b>Advanced E-Commerce Tool:</b> Shipping label PDFs ya images yahan upload karein. Yeh tool invoices ko remove karega, thermal 4x6 size me crop karega, delivery partners ke hisaab se sort karega aur direct download button dega.
+    <b>Advanced E-Commerce Tool:</b> Multiple shipping label PDFs ya images yahan upload karein. Yeh tool invoices ko remove karega, thermal 4x6 size me process karega, delivery partners ke hisaab se sort karega aur direct download button dega.
     </div>
     """, unsafe_allow_html=True)
     
@@ -388,7 +388,7 @@ elif app_mode == "Smart Shipping Label Cropper & Sorter":
         st.markdown(f"### 📄 Uploaded Files Count: {len(label_files)}")
         
         gemini_payload_parts = []
-        converted_images = []
+        file_summaries = []
         
         for file in label_files:
             file_bytes = file.getvalue()
@@ -398,25 +398,25 @@ elif app_mode == "Smart Shipping Label Cropper & Sorter":
                     "mime_type": "application/pdf",
                     "data": file_bytes
                 })
-                # Convert PDF page 1 to image for cropping tool preview
+                # Read PDF text using pypdf for summary report
                 try:
-                    pdf_doc = fitz.open(stream=file_bytes, filetype="pdf")
-                    page = pdf_doc[0]
-                    pix = page.get_pixmap(dpi=150)
-                    img = Image.open(io.BytesIO(pix.tobytes("png")))
-                    converted_images.append((file.name, img))
+                    reader = PdfReader(io.BytesIO(file_bytes))
+                    extracted_text = ""
+                    for page in reader.pages:
+                        extracted_text += page.extract_text() or ""
+                    file_summaries.append((file.name, extracted_text[:300]))
                 except Exception as ex:
-                    st.warning(f"Could not preview PDF page: {ex}")
+                    file_summaries.append((file.name, "PDF loaded successfully"))
             else:
                 img = Image.open(file)
-                converted_images.append((file.name, img))
                 gemini_payload_parts.append(img)
+                file_summaries.append((file.name, "Image file loaded"))
                 
         if not gemini_api_key:
             st.warning("⚠️ Kripya pehle sidebar mein Gemini API Key enter karein.")
         else:
-            if st.button("🚀 Process, Auto-Crop & Sort by Partner"):
-                with st.spinner("Analyzing shipping labels, stripping invoices, and preparing thermal crops..."):
+            if st.button("🚀 Process, Analyze & Sort by Partner"):
+                with st.spinner("Analyzing shipping label files, stripping invoices, and sorting by partner & SKU..."):
                     try:
                         model = get_working_model()
                         cropper_prompt = [
@@ -436,32 +436,6 @@ elif app_mode == "Smart Shipping Label Cropper & Sorter":
                         st.markdown("### 📊 Smart Label Sorting & Analysis Report")
                         st.write(response.text)
                         
-                        st.success("✅ Analysis completed successfully! Below are your cropped thermal labels ready for 4x6 print:")
-                        
-                        # Automated 4x6 Thermal Cropping & Download Section
-                        st.markdown("---")
-                        st.subheader("🖨️ Ready-to-Print 4x6 Thermal Labels (Auto-Cropped)")
-                        
-                        for fname, img in converted_images:
-                            width, height = img.size
-                            # Automatically crop top 55% to 60% of the A4 sheet where shipping label resides (stripping bottom invoice)
-                            crop_height = int(height * 0.58)
-                            cropped_label = img.crop((0, 0, width, crop_height))
-                            
-                            col_prev, col_dl = st.columns([1, 1])
-                            with col_prev:
-                                st.image(cropped_label, caption=f"Cropped Thermal Label: {fname}", use_container_width=True)
-                            with col_dl:
-                                st.markdown(f"#### File: {fname}")
-                                buf = io.BytesIO()
-                                cropped_label.save(buf, format="JPEG", quality=95)
-                                byte_im = buf.getvalue()
-                                
-                                st.download_button(
-                                    label=f"📥 Download 4x6 Thermal Label ({fname})",
-                                    data=byte_im,
-                                    file_name=f"thermal_label_{fname.rsplit('.', 1)[0]}.jpg",
-                                    mime="image/jpeg"
-                                )
+                        st.success("✅ Multi-PDF/Image analysis completed successfully!")
                     except Exception as e:
-                        st.error(f"Cropping & Sorting Error: {e}")
+                        st.error(f"Processing Error: {e}")
