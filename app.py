@@ -372,7 +372,7 @@ elif app_mode == "Smart Shipping Label Cropper & Sorter":
     st.title("✂️ Smart Shipping Label Cropper & Partner Sorter")
     st.markdown("""
     <div style="background-color: #f0f2f6; padding: 10px; border-radius: 8px; margin-bottom: 15px;">
-    <b>Advanced E-Commerce Tool:</b> Shipping label PDFs ya images yahan upload karein. Yeh tool invoices ko filter karega, 4x6 thermal format me crop/split instructions dega, delivery partners ke hisaab se sort karega aur SKU pick-list summary banayega.
+    <b>Advanced E-Commerce Tool:</b> Shipping label PDFs ya images yahan upload karein. Yeh tool invoices ko filter karega, 4x6 thermal format me crop/split instructions dega, delivery partners ke hisaab से sort karega aur SKU pick-list summary banayega.
     </div>
     """, unsafe_allow_html=True)
     
@@ -381,21 +381,25 @@ elif app_mode == "Smart Shipping Label Cropper & Sorter":
         ["Flipkart Seller Hub", "Amazon Shipping / Easy Ship", "Meesho Supplier Panel", "Multi-Marketplace Mixed Batch"]
     )
     
-    # Allowed PDF and image formats
     label_files = st.file_uploader("Upload Shipping Label Files (PDF or Images)", type=["jpg", "jpeg", "png", "pdf"], accept_multiple_files=True, key="label_crop_files")
     
     if label_files:
         st.markdown(f"### 📄 Uploaded Files Count: {len(label_files)}")
         
-        opened_label_contents = []
+        gemini_payload_parts = []
         for file in label_files:
+            file_bytes = file.getvalue()
             if file.type == "application/pdf":
-                st.info(f"📂 PDF Loaded: {file.name} ({file.size / 1024:.1f} KB)")
-                opened_label_contents.append(file)
+                st.info(f"📂 PDF Loaded & Prepared: {file.name} ({file.size / 1024:.1f} KB)")
+                # Pass PDF as inline data part dictionary compatible with Gemini API
+                gemini_payload_parts.append({
+                    "mime_type": "application/pdf",
+                    "data": file_bytes
+                })
             else:
                 img = Image.open(file)
                 st.image(img, caption=f"Image: {file.name}", width=300)
-                opened_label_contents.append(img)
+                gemini_payload_parts.append(img)
                 
         if not gemini_api_key:
             st.warning("⚠️ Kripya pehle sidebar mein Gemini API Key enter karein.")
@@ -416,10 +420,11 @@ elif app_mode == "Smart Shipping Label Cropper & Sorter":
                             
                             Provide clean structured output with clear headings for Partner Sorting, SKU Pick-list Summary, and Thermal Cropping Instructions.""",
                         ]
-                        for item in opened_label_contents:
-                            cropper_prompt.append(item)
+                        
+                        # Extend prompt with prepared file parts (Images or PDF byte dicts)
+                        cropper_payload = cropper_prompt + gemini_payload_parts
                             
-                        response = safe_generate_content(model, cropper_prompt)
+                        response = safe_generate_content(model, cropper_payload)
                         st.markdown("### 📊 Smart Label Cropping, SKU Summary & Partner Sorting Report")
                         st.write(response.text)
                         
