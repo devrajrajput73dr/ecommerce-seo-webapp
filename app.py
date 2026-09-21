@@ -3,12 +3,13 @@ import google.generativeai as genai
 from PIL import Image
 import io
 
-# Page Configuration
+# Yeh Streamlit ki sabse pehli command honi chahiye
 st.set_page_config(
     page_title="E-Commerce Elite SEO & AI Virtual Model Studio",
     page_layout="wide",
     initial_sidebar_state="expanded"
 )
+
 
 # Sidebar Navigation
 st.sidebar.markdown("## 🛠️ E-Commerce Suite Navigation")
