@@ -388,17 +388,23 @@ elif app_mode == "Smart Shipping Label Cropper & Sorter":
         
         gemini_payload_parts = []
         for file in label_files:
-            file_bytes = file.getvalue()
-            if file.type == "application/pdf":
-                st.info(f"📂 PDF Loaded Successfully: {file.name} ({file.size / 1024:.1f} KB)")
-                gemini_payload_parts.append({
-                    "mime_type": "application/pdf",
-                    "data": file_bytes
-                })
-            else:
-                img = Image.open(file)
-                st.image(img, caption=f"Image: {file.name}", width=300)
-                gemini_payload_parts.append(img)
+            try:
+                # Safe file bytes reading
+                file_bytes = file.read()
+                file.seek(0) # Reset pointer
+                
+                if file.type == "application/pdf" or file.name.lower().endswith('.pdf'):
+                    st.info(f"📂 PDF Loaded Successfully: {file.name} ({len(file_bytes) / 1024:.1f} KB)")
+                    gemini_payload_parts.append({
+                        "mime_type": "application/pdf",
+                        "data": file_bytes
+                    })
+                else:
+                    img = Image.open(file)
+                    st.image(img, caption=f"Image: {file.name}", width=300)
+                    gemini_payload_parts.append(img)
+            except Exception as load_err:
+                st.error(f"Error reading file {file.name}: {load_err}")
                 
         if not gemini_api_key:
             st.warning("⚠️ Kripya pehle sidebar mein Gemini API Key enter karein.")
