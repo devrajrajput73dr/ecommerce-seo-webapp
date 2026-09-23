@@ -26,3 +26,12 @@ streamlit run app.py
 Gemini is optional. Configure the API key in the sidebar or as `GEMINI_API_KEY` in Streamlit secrets for AI analysis.
 
 Marketplace fees are editable assumptions and must be verified against the current marketplace fee schedule before pricing decisions.
+
+
+## V4.3 PDF Label Cropper Calibration
+The PDF Label Cropper now includes marketplace-specific templates calibrated against the supplied Pure Vastra sample PDFs:
+- Meesho / Valmo — exact label: wide upper-page label; invoice excluded.
+- Flipkart / E-Kart — exact label: centered upper-page label; invoice excluded.
+- Auto Detect (Flipkart / Meesho): detects Flipkart/E-Kart or Meesho/Valmo from page text and applies the matching template.
+- Custom crop remains available using PDF bottom-left coordinates.
+- Safety margin defaults to 0% for tight marketplace-label cropping.
