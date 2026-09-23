@@ -842,7 +842,21 @@ elif mode == "🧾 PDF Label Cropper":
 
             c1,c2,c3 = st.columns(3)
             with c1:
-                mode_crop = st.selectbox("Page mode", ["Keep pages", "2-up split", "4-up split"])
+                mode_crop = st.selectbox(
+                    "Crop / page mode",
+                    [
+                        "Keep pages",
+                        "Top-right shipping label",
+                        "Top-left crop",
+                        "Bottom-right crop",
+                        "Bottom-left crop",
+                        "Right half",
+                        "Left half",
+                        "2-up split",
+                        "4-up split",
+                        "Custom crop",
+                    ]
+                )
             with c2:
                 order = st.selectbox("Order", ["Original", "Reverse"])
             with c3:
@@ -855,44 +869,88 @@ elif mode == "🧾 PDF Label Cropper":
 
             st.write("Selected pages:", [x+1 for x in pages])
 
+            # These presets are designed for common marketplace shipping-label PDFs
+            # where the label occupies the upper-right area and the invoice/packing
+            # slip is below it. Coordinates are percentages of the page.
+            if mode_crop == "Top-right shipping label":
+                st.info("Shipping-label preset: upper-right area only. This avoids exporting the invoice area below the label.")
+                x1_pct, y1_pct, x2_pct, y2_pct = 50, 42, 100, 100
+            elif mode_crop == "Top-left crop":
+                x1_pct, y1_pct, x2_pct, y2_pct = 0, 42, 50, 100
+            elif mode_crop == "Bottom-right crop":
+                x1_pct, y1_pct, x2_pct, y2_pct = 50, 0, 100, 58
+            elif mode_crop == "Bottom-left crop":
+                x1_pct, y1_pct, x2_pct, y2_pct = 0, 0, 50, 58
+            elif mode_crop == "Right half":
+                x1_pct, y1_pct, x2_pct, y2_pct = 50, 0, 100, 100
+            elif mode_crop == "Left half":
+                x1_pct, y1_pct, x2_pct, y2_pct = 0, 0, 50, 100
+            elif mode_crop == "Custom crop":
+                st.caption("Percentages use the PDF page: X/Y start at the bottom-left. For the top-right label, try X=50, Y=42, Width=50, Height=58.")
+                cc1,cc2,cc3,cc4 = st.columns(4)
+                with cc1: x1_pct = st.number_input("Left X %", 0.0, 100.0, 50.0, 1.0)
+                with cc2: y1_pct = st.number_input("Bottom Y %", 0.0, 100.0, 42.0, 1.0)
+                with cc3: x2_pct = st.number_input("Right X %", 0.0, 100.0, 100.0, 1.0)
+                with cc4: y2_pct = st.number_input("Top Y %", 0.0, 100.0, 100.0, 1.0)
+            else:
+                x1_pct = y1_pct = x2_pct = y2_pct = None
+
             if st.button("✂️ Create Output PDF", type="primary"):
-                # Keep-pages is lossless and reliable. For split modes, create quarter/half
-                # pages using pypdf transformations when page media boxes are available.
                 writer = PdfWriter()
                 for pi in pages:
                     page = reader.pages[pi]
                     if mode_crop == "Keep pages":
                         writer.add_page(page)
-                    else:
-                        mb = page.mediabox
-                        w = float(mb.width)
-                        h = float(mb.height)
-                        if mode_crop == "2-up split":
-                            for side in range(2):
-                                clone = copy.deepcopy(page)
-                                if side == 0:
-                                    box = RectangleObject([0, 0, w/2, h])
-                                else:
-                                    box = RectangleObject([w/2, 0, w, h])
-                                clone.cropbox = box
-                                writer.add_page(clone)
-                        else:
-                            for row in range(2):
-                                for col in range(2):
-                                    clone = copy.deepcopy(page)
-                                    box = RectangleObject([
-                                        col*w/2, row*h/2,
-                                        (col+1)*w/2, (row+1)*h/2
-                                    ])
-                                    clone.cropbox = box
-                                    writer.add_page(clone)
+                        continue
+
+                    mb = page.mediabox
+                    w = float(mb.width)
+                    h = float(mb.height)
+
+                    def add_crop(x1, y1, x2, y2):
+                        # Normalize/clamp the crop rectangle and create a fresh page copy.
+                        x1 = max(0.0, min(w, float(x1)))
+                        x2 = max(0.0, min(w, float(x2)))
+                        y1 = max(0.0, min(h, float(y1)))
+                        y2 = max(0.0, min(h, float(y2)))
+                        if x2 <= x1 or y2 <= y1:
+                            raise ValueError("Invalid crop rectangle. Check crop percentages.")
+                        clone = copy.deepcopy(page)
+                        clone.cropbox = RectangleObject([x1, y1, x2, y2])
+                        # Keep the media box consistent with the visible crop.
+                        clone.mediabox = RectangleObject([x1, y1, x2, y2])
+                        writer.add_page(clone)
+
+                    if mode_crop in {
+                        "Top-right shipping label", "Top-left crop",
+                        "Bottom-right crop", "Bottom-left crop",
+                        "Right half", "Left half", "Custom crop"
+                    }:
+                        add_crop(
+                            w * x1_pct / 100.0,
+                            h * y1_pct / 100.0,
+                            w * x2_pct / 100.0,
+                            h * y2_pct / 100.0,
+                        )
+                    elif mode_crop == "2-up split":
+                        for side in range(2):
+                            if side == 0:
+                                add_crop(0, 0, w/2, h)
+                            else:
+                                add_crop(w/2, 0, w, h)
+                    elif mode_crop == "4-up split":
+                        for row in range(2):
+                            for col in range(2):
+                                add_crop(col*w/2, row*h/2, (col+1)*w/2, (row+1)*h/2)
 
                 out = io.BytesIO()
                 writer.write(out)
                 out.seek(0)
-                st.success("Output PDF ready.")
-                st.download_button("📥 Download Cropped PDF", out.getvalue(),
-                                   "pure_vastra_labels_cropped.pdf", "application/pdf")
+                st.success(f"Output PDF ready — {len(writer.pages)} page(s).")
+                st.download_button(
+                    "📥 Download Cropped PDF", out.getvalue(),
+                    "pure_vastra_labels_cropped.pdf", "application/pdf"
+                )
 
 # ============================================================
 # AI VIRTUAL MODEL STUDIO
