@@ -1,1191 +1,903 @@
-import streamlit as st
-import google.generativeai as genai
-from PIL import Image
-import io
-import urllib.parse
-import time
-import requests
-import pandas as pd
-import json
-import re
-import difflib
 
-# Page Configuration
+import io
+import json
+import math
+import re
+import time
+from pathlib import Path
+
+import pandas as pd
+import streamlit as st
+from PIL import Image, ImageOps, ImageDraw
+
+try:
+    import google.generativeai as genai
+except Exception:
+    genai = None
+
+try:
+    from pypdf import PdfReader, PdfWriter
+except Exception:
+    PdfReader = PdfWriter = None
+
 st.set_page_config(
-    page_title="E-Commerce Elite SEO & AI Virtual Model Studio",
+    page_title="Pure Vastra Seller Intelligence Suite V4",
+    page_icon="🛍️",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
-
-# ==========================================
-# LISTING AUDITOR PRO V3 - DETERMINISTIC RULE ENGINE
-# ==========================================
-PLATFORM_PROFILES = {
+# ============================================================
+# MARKETPLACE PROFILES
+# ============================================================
+MARKETPLACE = {
     "Amazon India": {
-        "title_max": 200,
-        "bullet_target": 5,
-        "description_max": None,
-        "notes": "Amazon.in's current public listing guidance states a 200-character maximum title and describes titles, images, bullet points and descriptions as core listing fields."
+        "title_max": 75,
+        "highlight_max": 125,
+        "note": "Current Amazon India guidance: most non-media categories use <=75 characters for Item Name; Item Highlights provide up to 125 additional characters.",
     },
     "Flipkart": {
         "title_max": 200,
-        "bullet_target": 5,
-        "description_max": 4000,
-        "notes": "Flipkart field requirements can vary by category/catalogue; use the current seller panel/category template as the final validation source."
+        "highlight_max": 0,
+        "note": "Use the current Seller Hub/category template as the final authority because field requirements can vary.",
     },
     "Meesho": {
         "title_max": 150,
-        "bullet_target": 5,
-        "description_max": None,
-        "notes": "Meesho field requirements can vary by catalogue/category; use the current supplier panel as the final validation source."
-    }
+        "highlight_max": 0,
+        "note": "Use the current Supplier Panel/category template as the final authority because catalog requirements can vary.",
+    },
 }
 
-PROMO_CLAIMS = [
-    "best", "no.1", "#1", "number one", "guaranteed", "guarantee",
-    "lowest price", "cheapest", "best seller", "top selling"
+DEFAULT_FEES = {
+    "Amazon India": {"referral_pct": 15.0, "closing": 0.0},
+    "Flipkart": {"referral_pct": 12.0, "closing": 0.0},
+    "Meesho": {"referral_pct": 8.0, "closing": 0.0},
+}
+
+UNSUPPORTED_CLAIMS = [
+    "best", "no.1", "number 1", "guaranteed", "100% guaranteed",
+    "cheapest", "lowest price", "best seller", "perfect",
+    "premium quality", "luxury", "skin friendly", "money back",
 ]
 
-STOPWORDS = {
-    "the","and","for","with","from","this","that","are","you","your","our",
-    "of","to","in","on","a","an","is","it","by","as","at","or","be","has",
-    "have","will","can","into","made","ideal","use","using","also","only"
-}
+# ============================================================
+# COMMON HELPERS
+# ============================================================
+def s(v):
+    if v is None:
+        return ""
+    try:
+        if pd.isna(v):
+            return ""
+    except Exception:
+        pass
+    return str(v).strip()
 
-def _audit_normalize(text):
-    return re.sub(r"[^a-z0-9\s]", " ", str(text or "").lower())
+def norm(v):
+    return re.sub(r"\s+", " ", s(v)).strip()
 
-def _audit_tokens(text):
-    return [
-        t for t in _audit_normalize(text).split()
-        if len(t) > 1 and t not in STOPWORDS
-    ]
+def tokens(v):
+    return re.findall(r"[a-z0-9]+", s(v).lower())
 
-def _audit_word_counts(text):
-    counts = {}
-    for token in _audit_tokens(text):
-        counts[token] = counts.get(token, 0) + 1
-    return counts
-
-def _audit_parse_keywords(text):
-    if not text:
+def bullets(v):
+    raw = s(v)
+    if not raw:
         return []
-    return [p.strip().lower() for p in re.split(r"[,;\n|]+", str(text)) if p.strip()]
+    parts = re.split(r"\n+|(?:^|\n)\s*[-•*]\s+", raw)
+    return [norm(re.sub(r"^[\-\•\*\d\.\)\s]+", "", x)) for x in parts if norm(x)]
 
-def _audit_parse_attributes(text):
-    result = {}
-    for line in str(text or "").splitlines():
+def repeated_words(v, minimum=3):
+    c = {}
+    for x in tokens(v):
+        c[x] = c.get(x, 0) + 1
+    return {k: n for k, n in c.items() if n >= minimum and len(k) > 2}
+
+def parse_lines(v):
+    out = {}
+    for line in s(v).splitlines():
         if ":" in line:
-            key, value = line.split(":", 1)
-            key = key.strip().lower()
-            if key:
-                result[key] = value.strip()
+            k, val = line.split(":", 1)
+            out[norm(k).lower()] = norm(val)
+    return out
+
+def safe_json(text):
+    text = s(text)
+    m = re.search(r"```(?:json)?\s*(.*?)```", text, re.S | re.I)
+    text = m.group(1) if m else text
+    a, b = text.find("{"), text.rfind("}")
+    if a >= 0 and b > a:
+        try:
+            return json.loads(text[a:b+1])
+        except Exception:
+            pass
+    return None
+
+def api_key():
+    try:
+        if "GEMINI_API_KEY" in st.secrets:
+            return st.secrets["GEMINI_API_KEY"]
+    except Exception:
+        pass
+    return st.session_state.get("gemini_key")
+
+def model():
+    key = api_key()
+    if not key or genai is None:
+        return None
+    genai.configure(api_key=key)
+    return genai.GenerativeModel("gemini-2.5-flash")
+
+def ai_generate(contents, retries=3):
+    m = model()
+    if not m:
+        raise RuntimeError("Gemini API key configure karein.")
+    last = None
+    for i in range(retries):
+        try:
+            return m.generate_content(contents)
+        except Exception as e:
+            last = e
+            if ("429" in str(e) or "quota" in str(e).lower()) and i < retries - 1:
+                time.sleep(5 * (i + 1))
+            else:
+                raise
+    raise last
+
+def image_list(files):
+    result = []
+    for f in files or []:
+        try:
+            f.seek(0)
+            result.append(Image.open(f).convert("RGB"))
+            f.seek(0)
+        except Exception:
+            pass
     return result
 
-def run_deterministic_listing_audit(
-    marketplace, title, bullets, description, backend_terms,
-    attributes, verified_facts, target_keywords,
-    category="", product_type="", browse_node=""
-):
-    profile = PLATFORM_PROFILES.get(marketplace, PLATFORM_PROFILES["Amazon India"])
-    title = str(title or "").strip()
-    bullets = str(bullets or "").strip()
-    description = str(description or "").strip()
-    backend_terms = str(backend_terms or "").strip()
-    category = str(category or "").strip()
-    product_type = str(product_type or "").strip()
-    browse_node = str(browse_node or "").strip()
+# ============================================================
+# DETERMINISTIC AUDIT
+# ============================================================
+def audit_listing(marketplace, title, highlights="", bullets_text="", description="",
+                  backend="", attributes="", facts="", target_keywords="",
+                  category="", product_type="", browse_node=""):
+    p = MARKETPLACE[marketplace]
+    score = 100
+    critical, warnings, passed = [], [], []
 
-    issues = []
-    title_len = len(title)
-    max_title = profile["title_max"]
+    title = norm(title)
+    highlights = norm(highlights)
+    b = bullets(bullets_text)
+    desc = norm(description)
+    combined = " ".join([title, highlights, bullets_text, desc, backend]).lower()
 
     if not title:
-        issues.append({
-            "severity": "CRITICAL", "field": "Title",
-            "problem": "Title is empty.",
-            "recommended_fix": "Add a precise product title using verified product facts."
-        })
-    elif title_len > max_title:
-        issues.append({
-            "severity": "HIGH", "field": "Title",
-            "problem": f"Title is {title_len} characters; profile reference is {max_title}.",
-            "recommended_fix": "Shorten the title while retaining product type, key material/design, colour and differentiating attributes."
-        })
+        critical.append(("P0", "Title missing", "Add a factual title."))
+        score -= 25
+    elif len(title) > p["title_max"]:
+        critical.append(("P0", "Title over limit", f"{len(title)} chars; target <= {p['title_max']}."))
+        score -= 20
+    else:
+        passed.append(f"Title length OK: {len(title)}/{p['title_max']}")
 
-    title_counts = _audit_word_counts(title)
-    duplicate_title_words = sorted([w for w, n in title_counts.items() if n >= 3])
-    if duplicate_title_words:
-        issues.append({
-            "severity": "MEDIUM", "field": "Title",
-            "problem": "Repeated title words detected: " + ", ".join(duplicate_title_words),
-            "recommended_fix": "Remove unnecessary repetition and use distinct relevant attributes."
-        })
+    rep = repeated_words(title)
+    if rep:
+        warnings.append(("P1", "Repeated title terms", ", ".join(rep.keys())))
+        score -= min(10, len(rep) * 2)
 
-    bullet_lines = [x.strip(" •-\t") for x in bullets.splitlines() if x.strip(" •-\t")]
-    bullet_count = len(bullet_lines)
-    if marketplace == "Amazon India" and bullet_count < 5:
-        issues.append({
-            "severity": "HIGH", "field": "Bullet Points",
-            "problem": f"Only {bullet_count} bullet(s) supplied; this auditor targets 5 for a complete Amazon audit.",
-            "recommended_fix": "Cover verified material, design/features, use/occasion, included components and care/specification information."
-        })
-    elif bullet_count == 0:
-        issues.append({
-            "severity": "CRITICAL", "field": "Bullet Points",
-            "problem": "No bullet points supplied.",
-            "recommended_fix": "Add concise feature-led bullets."
-        })
-
-    if len(description) < 80:
-        issues.append({
-            "severity": "MEDIUM", "field": "Description",
-            "problem": "Description is missing or very short.",
-            "recommended_fix": "Explain product identity, verified features, included components and relevant care/use information."
-        })
-
-    if not backend_terms:
-        issues.append({
-            "severity": "MEDIUM", "field": "Backend Search Terms",
-            "problem": "No backend search terms were supplied for audit.",
-            "recommended_fix": "Add relevant non-duplicate terms after checking the marketplace's current field rules."
-        })
-
-    all_customer_text = " ".join([title, bullets, description])
-    content_normalized = _audit_normalize(all_customer_text)
-    content_tokens = set(_audit_tokens(all_customer_text))
-    requested_keywords = _audit_parse_keywords(target_keywords)
-    missing_keywords = []
-    covered_keywords = []
-
-    for kw in requested_keywords:
-        kw_tokens = set(_audit_tokens(kw))
-        if kw.lower() in content_normalized or kw_tokens.issubset(content_tokens):
-            covered_keywords.append(kw)
+    if marketplace == "Amazon India":
+        if highlights and len(highlights) <= 125:
+            passed.append(f"Item Highlights OK: {len(highlights)}/125")
+        elif highlights:
+            warnings.append(("P1", "Item Highlights over limit", f"{len(highlights)} chars; target <=125."))
+            score -= 8
         else:
-            missing_keywords.append(kw)
+            warnings.append(("P1", "Item Highlights missing", "Add verified material/use-case information where appropriate."))
+            score -= 4
 
-    if missing_keywords:
-        issues.append({
-            "severity": "MEDIUM", "field": "Keyword Coverage",
-            "problem": "Relevant seller-supplied keywords are not clearly represented: " + ", ".join(missing_keywords[:12]),
-            "recommended_fix": "Integrate relevant terms naturally into appropriate customer-facing or backend fields."
-        })
+    if len(b) >= 5:
+        passed.append(f"{len(b)} bullet lines detected")
+    elif b:
+        warnings.append(("P1", "Few bullet lines", f"Only {len(b)} detected."))
+        score -= 7
+    else:
+        critical.append(("P0", "Bullets/highlights missing", "Add factual product benefits and specifications."))
+        score -= 15
 
-    claim_hits = [c for c in PROMO_CLAIMS if c in content_normalized]
-    if claim_hits:
-        issues.append({
-            "severity": "HIGH", "field": "Claims / Compliance",
-            "problem": "Potential promotional or unsupported claims detected: " + ", ".join(claim_hits),
-            "recommended_fix": "Remove or manually verify the claim before publishing."
-        })
+    if len(desc) >= 80:
+        passed.append("Description has useful content")
+    elif desc:
+        warnings.append(("P2", "Description short", "Expand with verified product facts."))
+        score -= 4
+    else:
+        critical.append(("P1", "Description missing", "Add a factual description."))
+        score -= 8
 
-    attr_map = _audit_parse_attributes(attributes)
-    fact_map = _audit_parse_attributes(verified_facts)
+    if marketplace == "Amazon India" and not norm(backend):
+        warnings.append(("P2", "Backend/search terms missing", "Add relevant non-duplicative terms if the field is available."))
+        score -= 4
+
+    kws = [norm(x) for x in re.split(r"[,;\n]+", s(target_keywords)) if norm(x)]
+    missing = [k for k in kws if k.lower() not in combined]
+    if missing:
+        warnings.append(("P1", "Target keyword gaps", ", ".join(missing[:15])))
+        score -= min(12, len(missing) * 2)
+
+    hits = sorted(set(x for x in UNSUPPORTED_CLAIMS if x in combined))
+    if hits:
+        warnings.append(("P1", "Potential unsupported/promotional claims", ", ".join(hits)))
+        score -= min(12, len(hits) * 2)
+
+    fact_map = parse_lines(facts)
+    attr_map = parse_lines(attributes)
     conflicts = []
-    for key, attr_value in attr_map.items():
-        if key in fact_map and fact_map[key] and attr_value:
-            if _audit_normalize(fact_map[key]) != _audit_normalize(attr_value):
-                conflicts.append((key, attr_value, fact_map[key]))
-                issues.append({
-                    "severity": "CRITICAL",
-                    "field": f"Attribute: {key}",
-                    "problem": f"Current '{attr_value}' conflicts with verified '{fact_map[key]}'.",
-                    "recommended_fix": "Physically verify the product and update the marketplace attribute."
-                })
+    for k, v in attr_map.items():
+        if k in fact_map and v and fact_map[k] and v.lower() != fact_map[k].lower():
+            conflicts.append(f"{k}: attribute='{v}' vs verified='{fact_map[k]}'")
+    if conflicts:
+        critical.append(("P0", "Attribute conflicts", " | ".join(conflicts[:8])))
+        score -= min(20, 5 * len(conflicts))
 
-    if not category and not product_type and not browse_node:
-        issues.append({
-            "severity": "HIGH", "field": "Category / Browse Classification",
-            "problem": "No category, product type or browse information was supplied.",
-            "recommended_fix": "Paste the current marketplace classification fields so the auditor can check classification risk."
-        })
+    if not category:
+        warnings.append(("P2", "Category not supplied", "Verify category in the current marketplace panel."))
+        score -= 2
+    if not product_type:
+        warnings.append(("P2", "Product type missing", "Verify the exact catalog/product type."))
+        score -= 2
+    if marketplace == "Amazon India" and not browse_node:
+        warnings.append(("P2", "Browse node not supplied", "Verify current browse placement; never invent IDs."))
+        score -= 2
 
-    # Suspicious dimension field example: flag for verification, never auto-correct.
-    for key, value in attr_map.items():
-        if any(term in key for term in ["length", "width", "height", "dimension", "weight"]):
-            if re.search(r"\b35\s*cm\b", value.lower()):
-                issues.append({
-                    "severity": "HIGH",
-                    "field": f"Attribute: {key}",
-                    "problem": f"Value '{value}' should be physically verified.",
-                    "recommended_fix": "Measure the actual product/package and confirm the field meaning and unit."
-                })
+    if re.search(r"\bitem length\s*[:=-]?\s*35\s*cm\b", (attributes + " " + facts).lower()):
+        warnings.append(("P1", "Dimension needs manual verification", "Verify 35 cm is the actual product measurement, not package data."))
+        score -= 5
 
-    score = 100
-    penalties = {"CRITICAL": 20, "HIGH": 12, "MEDIUM": 7, "LOW": 3}
-    for issue in issues:
-        score -= penalties.get(issue["severity"], 3)
-    score = max(0, min(100, score))
-
+    score = max(0, min(100, int(score)))
+    status = "READY" if score >= 90 and not critical else ("REVIEW" if score >= 70 else "FIX BEFORE PUBLISH")
     return {
-        "score": score,
-        "issues": issues,
-        "title_length": title_len,
-        "title_limit": max_title,
-        "bullet_count": bullet_count,
-        "description_length": len(description),
-        "backend_length": len(backend_terms),
-        "requested_keywords": requested_keywords,
-        "covered_keywords": covered_keywords,
-        "missing_keywords": missing_keywords,
-        "duplicate_title_words": duplicate_title_words,
-        "claim_hits": claim_hits,
-        "attribute_conflicts": conflicts,
-        "profile_notes": profile["notes"]
+        "score": score, "status": status, "critical": critical,
+        "warnings": warnings, "passed": passed, "missing_keywords": missing
     }
 
-def render_rule_audit(result):
-    st.markdown("### ⚙️ Deterministic Rule Audit")
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Rule Score", f"{result['score']}/100")
-    c2.metric("Title", f"{result['title_length']}/{result['title_limit']}")
-    c3.metric("Bullets", result["bullet_count"])
-    c4.metric("Description", result["description_length"])
-    c5.metric("Backend chars", result["backend_length"])
+# ============================================================
+# MULTI-LISTING VARIANT ENGINE
+# ============================================================
+def make_variant_prompt(marketplace, base_name, facts, category, product_type,
+                        target_keywords, count, strategies, current_content=""):
+    p = MARKETPLACE[marketplace]
+    strategy_text = "\n".join(f"{i+1}. {x}" for i, x in enumerate(strategies))
+    return f"""
+Create {count} DIFFERENT DRAFT LISTING VARIANTS for the SAME physical product on {marketplace}.
 
-    if result["issues"]:
-        rows = [{
-            "Priority": x["severity"],
-            "Field": x["field"],
-            "Problem": x["problem"],
-            "Exact Fix": x["recommended_fix"]
-        } for x in result["issues"]]
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-    else:
-        st.success("No obvious deterministic issues found in the supplied fields.")
+This is a content-variation generator, NOT permission to create duplicate marketplace catalogs.
+Keep the physical product identity locked.
 
-    if result["missing_keywords"]:
-        st.warning("Missing supplied keywords: " + ", ".join(result["missing_keywords"]))
-    if result["duplicate_title_words"]:
-        st.info("Repeated title words: " + ", ".join(result["duplicate_title_words"]))
-    if result["claim_hits"]:
-        st.warning("Claims requiring review: " + ", ".join(result["claim_hits"]))
+LOCKED FACTS — DO NOT CHANGE:
+{facts}
 
-    with st.expander("Platform profile / validation note"):
-        st.write(result["profile_notes"])
+Base product name:
+{base_name}
 
+Category:
+{category}
 
-# Sidebar Navigation
-st.sidebar.markdown("## 🛠️ E-Commerce Suite Navigation")
-app_mode = st.sidebar.radio(
-    "Select Tool Mode:",
-    [
-        "AI Virtual Model Studio (Gemini Powered)",
-        "Single Listing & SEO Generator",
-        "Listing Audit & Optimization Tool",
-        "Bulk CSV Catalog Generator",
-        "Profit Margin & Commission Calculator",
-        "Smart Shipping Label Cropper & Sorter"
-    ]
-)
+Product type:
+{product_type}
 
-# API Key Configuration
-st.sidebar.markdown("---")
-gemini_api_key = None
-if "GEMINI_API_KEY" in st.secrets:
-    gemini_api_key = st.secrets["GEMINI_API_KEY"]
-
-if not gemini_api_key:
-    api_key_input = st.sidebar.text_input("Enter Gemini API Key", type="password")
-    if api_key_input:
-        gemini_api_key = api_key_input
-
-if gemini_api_key:
-    genai.configure(api_key=gemini_api_key)
-
-def get_working_model():
-    return genai.GenerativeModel('gemini-2.5-flash')
-
-# Helper function with automatic retry for rate limits (429 errors)
-def safe_generate_content(model, contents, retries=3, delay=10):
-    for attempt in range(retries):
-        try:
-            return model.generate_content(contents)
-        except Exception as e:
-            error_str = str(e)
-            if "429" in error_str or "Quota exceeded" in error_str:
-                if attempt < retries - 1:
-                    time.sleep(delay)
-                    continue
-            raise e
-
-# ==========================================
-# MODE 1: SINGLE LISTING & SEO GENERATOR
-# ==========================================
-if app_mode == "Single Listing & SEO Generator":
-    st.title("📦 Multi-Platform SEO Listing Generator (Multi-Image Support)")
-    st.markdown("Product/Garment ki images upload karein aur Amazon A9/A10, Flipkart, aur Meesho algorithms ke liye complete SEO content generate karein.")
-    
-    uploaded_listing_imgs = st.file_uploader("Upload Product/Garment Images (Max 4 angles)", type=["jpg", "jpeg", "png"], accept_multiple_files=True, key="single_listing_imgs")
-    product_name = st.text_input("Enter Product Name / Category (e.g., Designer Silk Saree):")
-    key_features = st.text_area("Enter Key Features / Fabric Details (e.g., Pure Kanjivaram Silk, Zari Work):")
-    
-    if uploaded_listing_imgs:
-        if len(uploaded_listing_imgs) > 4:
-            st.warning("⚠️ Please upload a maximum of 4 images.")
-            uploaded_listing_imgs = uploaded_listing_imgs[:4]
-            
-        st.markdown("### 📸 Uploaded Images Preview:")
-        cols = st.columns(len(uploaded_listing_imgs))
-        opened_listing_images = []
-        for i, file in enumerate(uploaded_listing_imgs):
-            img = Image.open(file)
-            opened_listing_images.append(img)
-            with cols[i]:
-                st.image(img, caption=f"View {i+1}", use_container_width=True)
-                
-    if st.button("Generate Optimized Listings") and product_name:
-        if not gemini_api_key:
-            st.warning("⚠️ Kripya pehle Gemini API Key configure karein.")
-        else:
-            with st.spinner("Analyzing product images and generating complete multi-platform listings..."):
-                try:
-                    model = get_working_model()
-                    unified_prompt = [
-                        f"""Act as an E-commerce Senior SEO Expert & Garment Analyst for Amazon (A9/A10), Flipkart, and Meesho algorithms.
-                        Product Name: {product_name}
-                        Additional Details: {key_features}
-                        
-                        Please analyze the uploaded product images and details to provide:
-                        PART 1: GARMENT & PRODUCT ANALYSIS BREAKDOWN
-                        - Design Type & Style (e.g., Ethnic, Anarkali, Kanjivaram, etc.)
-                        - Print & Pattern Type (e.g., Floral Print, Embroidered, Zari Work, etc.)
-                        - Occasion (Festive, Wedding, Party, etc.)
-                        - Color & Fabric Quality (Shade, fabric type & grade)
-                        
-                        PART 2: COMPLETE MULTI-PLATFORM SEO CONTENT
-                        Provide separate, fully detailed sections for:
-                        1. Amazon India (A9/A10): Title, Bullet Points, Product Description, Search / Backend Keywords.
-                        2. Flipkart: Title, Bullet Points, Product Description, Search Keywords.
-                        3. Meesho Prism: Title, Trendy Description, Budget & Visual Focus Keywords.""",
-                    ]
-                    if 'opened_listing_images' in locals() and opened_listing_images:
-                        unified_prompt.extend(opened_listing_images)
-                        
-                    response = safe_generate_content(model, unified_prompt)
-                    st.markdown("### 📊 Complete Garment Analysis & Multi-Platform SEO Content")
-                    st.write(response.text)
-                    
-                except Exception as e:
-                    st.error(f"Error: {e}")
-
-# ==========================================
-# MODE 2: LISTING AUDIT & OPTIMIZATION TOOL
-# ==========================================
-elif app_mode == "Listing Audit & Optimization Tool":
-    st.title("🧠 E-Commerce Listing Auditor PRO")
-    st.markdown("""
-    <div style="background-color:#f0f2f6;padding:14px;border-radius:10px;margin-bottom:16px;">
-    <b>Amazon India • Flipkart • Meesho</b><br>
-    Deterministic rule checks run first; Gemini then adds semantic, keyword and image analysis.
-    The auditor separates <b>verified product facts</b> from recommendations and flags fields
-    that require seller-panel verification.
-    </div>
-    """, unsafe_allow_html=True)
-
-    audit_tab, bulk_tab, methodology_tab = st.tabs([
-        "🔍 Single Listing Audit",
-        "📦 Bulk Listing Audit",
-        "📚 Methodology"
-    ])
-
-    with audit_tab:
-        st.subheader("1. Marketplace & Product Context")
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            marketplace = st.selectbox(
-                "Marketplace",
-                ["Amazon India", "Flipkart", "Meesho"],
-                key="pro_marketplace"
-            )
-            audit_id = st.text_input("ASIN / FSN / SKU", key="pro_audit_id")
-            category = st.text_input("Current Category / Browse Path", key="pro_category")
-        with c2:
-            product_type = st.text_input("Product Type / Item Type Keyword", key="pro_product_type")
-            browse_node = st.text_input("Browse Node / Category ID", key="pro_browse_node")
-            target_customer = st.text_input(
-                "Target Customer / Use Case",
-                placeholder="women, festive, wedding, party...",
-                key="pro_target_customer"
-            )
-        with c3:
-            material = st.text_input("Verified Material / Fabric", key="pro_material")
-            colour = st.text_input("Verified Colour", key="pro_colour")
-            pattern = st.text_input("Verified Pattern / Design", key="pro_pattern")
-
-        st.subheader("2. Verified Product Facts")
-        verified_facts = st.text_area(
-            "Facts physically verified by you",
-            placeholder=(
-                "Fabric: Linen Cotton\n"
-                "Print: Digital floral print\n"
-                "Work: Mirror work\n"
-                "Pallu: Tassel finish\n"
-                "Blouse: Matching unstitched blouse piece\n"
-                "Actual saree length: ...\n"
-                "Actual blouse length: ..."
-            ),
-            height=150,
-            key="pro_verified_facts"
-        )
-
-        st.subheader("3. Current Listing")
-        existing_title = st.text_area("Current Title", height=90, key="pro_title")
-        existing_bullets = st.text_area(
-            "Current Bullet Points",
-            height=180,
-            placeholder="One bullet per line",
-            key="pro_bullets"
-        )
-        existing_desc = st.text_area("Current Description", height=180, key="pro_description")
-        existing_backend = st.text_area(
-            "Current Backend Search Terms / Keywords",
-            height=100,
-            key="pro_backend"
-        )
-        current_attributes = st.text_area(
-            "Current Attributes",
-            height=160,
-            placeholder="One attribute per line: Attribute: Value",
-            key="pro_attributes"
-        )
-        target_keywords = st.text_area(
-            "Known / Target Keywords (optional)",
-            placeholder="linen cotton saree, digital print saree...",
-            height=90,
-            key="pro_keywords"
-        )
-
-        st.subheader("4. Product Images")
-        audit_imgs = st.file_uploader(
-            "Upload up to 8 product images",
-            type=["jpg", "jpeg", "png", "webp"],
-            accept_multiple_files=True,
-            key="pro_images"
-        )
-        opened_images = []
-        if audit_imgs:
-            audit_imgs = audit_imgs[:8]
-            img_cols = st.columns(min(len(audit_imgs), 4))
-            for i, file in enumerate(audit_imgs):
-                try:
-                    img = Image.open(file)
-                    opened_images.append(img)
-                    with img_cols[i % len(img_cols)]:
-                        st.image(img, caption=f"Image {i+1}", use_container_width=True)
-                except Exception as image_error:
-                    st.warning(f"{file.name}: {image_error}")
-
-        st.subheader("5. Audit Controls")
-        a1, a2, a3 = st.columns(3)
-        with a1:
-            run_ai = st.checkbox("Gemini Deep Audit", value=True, key="pro_run_ai")
-        with a2:
-            run_images = st.checkbox("Image Analysis", value=True, key="pro_run_images")
-        with a3:
-            generate_rewrite = st.checkbox(
-                "Generate Optimized Copy", value=True, key="pro_rewrite"
-            )
-
-        if st.button("🚀 RUN PRO LISTING AUDIT", type="primary", key="run_pro_audit"):
-            if not existing_title.strip():
-                st.warning("⚠️ Current title required hai.")
-            elif run_ai and not gemini_api_key:
-                st.warning("⚠️ Gemini API key configure karein, ya Gemini Deep Audit off karein.")
-            else:
-                with st.spinner("Running deterministic + marketplace audit..."):
-                    rule_result = run_deterministic_listing_audit(
-                        marketplace=marketplace,
-                        title=existing_title,
-                        bullets=existing_bullets,
-                        description=existing_desc,
-                        backend_terms=existing_backend,
-                        attributes=current_attributes,
-                        verified_facts=verified_facts,
-                        target_keywords=target_keywords,
-                        category=category,
-                        product_type=product_type,
-                        browse_node=browse_node
-                    )
-                render_rule_audit(rule_result)
-
-                if run_ai:
-                    with st.spinner("Gemini is performing semantic, keyword and image analysis..."):
-                        try:
-                            model = get_working_model()
-                            ai_prompt = f"""
-You are a senior marketplace listing auditor for {marketplace}.
-
-RULES
-- Do not claim access to private ranking algorithms.
-- Never invent product facts, measurements, certifications, search volume or sales data.
-- Seller-provided verified facts are the source of truth; conflicts must be flagged VERIFY.
-- Keyword recommendations are relevance suggestions, not search-volume claims.
-- Do not keyword-stuff.
-- Do not use unsupported superlatives or guarantees.
-- Do not invent category IDs/browse nodes. If classification is uncertain, say VERIFY.
-- Customer-facing copy must contain only supportable facts.
-- Return JSON only.
-
-PRODUCT CONTEXT
-ID: {audit_id}
-Category: {category}
-Product Type: {product_type}
-Browse Node: {browse_node}
-Target Customer: {target_customer}
-Material: {material}
-Colour: {colour}
-Pattern: {pattern}
-
-VERIFIED FACTS:
-{verified_facts}
-
-CURRENT TITLE:
-{existing_title}
-
-CURRENT BULLETS:
-{existing_bullets}
-
-CURRENT DESCRIPTION:
-{existing_desc}
-
-CURRENT BACKEND:
-{existing_backend}
-
-CURRENT ATTRIBUTES:
-{current_attributes}
-
-TARGET KEYWORDS:
+Target keywords:
 {target_keywords}
 
-DETERMINISTIC AUDIT:
-{json.dumps(rule_result, ensure_ascii=False)}
+Variation strategies:
+{strategy_text}
 
-Generate an evidence-first audit. Return ONLY this JSON structure:
+Rules:
+- Never invent material, color, measurements, certifications, warranty, quality grade or features.
+- Never change locked facts between variants.
+- Do not use keyword stuffing.
+- Do not use unsupported superlatives.
+- Do not claim access to private ranking algorithms.
+- Avoid near-duplicate wording.
+- Every variant must be genuinely different in wording/angle while remaining factually identical.
+- For Amazon India: Item Name <= {p['title_max']} characters and Item Highlights <= {p['highlight_max']} characters.
+- Use the most important product facts in the title; distribute additional verified details into Item Highlights where available.
+- Return JSON only.
+
+JSON:
 {{
-  "executive_summary": "",
-  "semantic_score": 0,
-  "score_breakdown": {{
-    "search_relevance": 0,
-    "content_quality": 0,
-    "attribute_quality": 0,
-    "category_alignment": 0,
-    "customer_clarity": 0,
-    "conversion_readiness": 0,
-    "image_quality": 0
-  }},
-  "priority_actions": [
-    {{
-      "priority": "P0|P1|P2|P3",
-      "field": "",
-      "current": "",
-      "issue": "",
-      "exact_fix": "",
-      "why": ""
-    }}
-  ],
-  "keyword_strategy": {{
-    "primary": [],
-    "secondary": [],
-    "long_tail": [],
-    "missing": [],
-    "redundant": [],
-    "backend_suggestions": [],
-    "keyword_warnings": []
-  }},
-  "attribute_strategy": [
-    {{
-      "attribute": "",
-      "current": "",
-      "recommended": "",
-      "status": "KEEP|CHANGE|VERIFY|MISSING",
-      "reason": ""
-    }}
-  ],
-  "category_strategy": {{
-    "status": "ALIGNED|VERIFY|MISMATCH_RISK",
-    "finding": "",
-    "seller_panel_fields_to_verify": [],
-    "recommended_action": ""
-  }},
-  "title": {{
-    "recommended": "",
-    "changes": []
-  }},
-  "bullets": [],
-  "description": "",
-  "backend_search_terms": "",
-  "image_audit": [
-    {{
-      "image": "",
-      "finding": "",
-      "recommended_action": ""
-    }}
-  ],
-  "verification_required": [],
-  "publish_checklist": []
+ "variants":[
+   {{
+    "variant_no":1,
+    "angle":"...",
+    "title":"...",
+    "item_highlights":"...",
+    "bullets":["...","...","...","...","..."],
+    "description":"...",
+    "backend_keywords":"...",
+    "keyword_focus":["..."],
+    "locked_facts_check":"PASS"
+   }}
+ ]
 }}
 """
-                            payload = [ai_prompt]
-                            if run_images and opened_images:
-                                payload.extend(opened_images)
 
-                            response = safe_generate_content(model, payload)
-                            raw = response.text.strip()
-                            raw = re.sub(r"^```(?:json)?\s*", "", raw, flags=re.I)
-                            raw = re.sub(r"\s*```$", "", raw).strip()
+def local_similarity(a, b):
+    A, B = set(tokens(a)), set(tokens(b))
+    if not A or not B:
+        return 0.0
+    return round(100 * len(A & B) / len(A | B), 1)
 
-                            try:
-                                ai_result = json.loads(raw)
-                            except json.JSONDecodeError:
-                                ai_result = None
-                                st.error("Gemini ne valid JSON return nahi kiya.")
-                                st.code(response.text)
-
-                            if ai_result:
-                                st.markdown("---")
-                                st.subheader("🧠 Gemini Deep Audit")
-                                x1, x2, x3 = st.columns(3)
-                                x1.metric(
-                                    "Semantic Score",
-                                    f"{ai_result.get('semantic_score', 0)}/100"
-                                )
-                                x2.metric(
-                                    "Rule Score",
-                                    f"{rule_result['score']}/100"
-                                )
-                                x3.metric(
-                                    "Priority Actions",
-                                    len(ai_result.get("priority_actions", []) or [])
-                                )
-                                st.progress(
-                                    max(0, min(int(ai_result.get("semantic_score", 0) or 0), 100)) / 100
-                                )
-                                st.info(ai_result.get("executive_summary", ""))
-
-                                deep_breakdown = ai_result.get("score_breakdown", {}) or {}
-                                if deep_breakdown:
-                                    st.markdown("### 🎯 Deep Score Breakdown")
-                                    st.dataframe(
-                                        pd.DataFrame([
-                                            {
-                                                "Area": str(k).replace("_", " ").title(),
-                                                "Score": v
-                                            }
-                                            for k, v in deep_breakdown.items()
-                                        ]),
-                                        use_container_width=True,
-                                        hide_index=True
-                                    )
-
-                                actions = ai_result.get("priority_actions", []) or []
-                                if actions:
-                                    st.markdown("### 🚨 Priority Action Plan")
-                                    st.dataframe(
-                                        pd.DataFrame([
-                                            {
-                                                "Priority": x.get("priority", ""),
-                                                "Field": x.get("field", ""),
-                                                "Current": x.get("current", ""),
-                                                "Issue": x.get("issue", ""),
-                                                "Exact Fix": x.get("exact_fix", ""),
-                                                "Why": x.get("why", "")
-                                            }
-                                            for x in actions
-                                        ]),
-                                        use_container_width=True,
-                                        hide_index=True
-                                    )
-
-                                kw = ai_result.get("keyword_strategy", {}) or {}
-                                st.markdown("### 🔑 Keyword Strategy")
-                                k1, k2, k3, k4 = st.columns(4)
-                                for col, heading, key in [
-                                    (k1, "Primary", "primary"),
-                                    (k2, "Secondary", "secondary"),
-                                    (k3, "Long-tail", "long_tail"),
-                                    (k4, "Missing", "missing")
-                                ]:
-                                    with col:
-                                        st.markdown(f"**{heading}**")
-                                        for value in kw.get(key, []) or []:
-                                            st.write("•", value)
-                                if kw.get("redundant"):
-                                    st.info("Redundant: " + ", ".join(map(str, kw["redundant"])))
-                                for warning in kw.get("keyword_warnings", []) or []:
-                                    st.caption("⚠️ " + str(warning))
-
-                                st.markdown("### ✏️ Optimized Listing")
-                                title_data = ai_result.get("title", {}) or {}
-                                title_after = title_data.get("recommended", "")
-                                bullets_after = "\n".join(
-                                    f"• {x}" for x in (ai_result.get("bullets", []) or [])
-                                )
-                                desc_after = ai_result.get("description", "")
-                                backend_after = ai_result.get("backend_search_terms", "")
-
-                                st.text_area(
-                                    "Recommended Title",
-                                    value=title_after,
-                                    height=90,
-                                    key="pro_result_title"
-                                )
-                                st.text_area(
-                                    "Recommended Bullet Points",
-                                    value=bullets_after,
-                                    height=220,
-                                    key="pro_result_bullets"
-                                )
-                                st.text_area(
-                                    "Recommended Description",
-                                    value=desc_after,
-                                    height=220,
-                                    key="pro_result_description"
-                                )
-                                st.text_area(
-                                    "Recommended Backend Search Terms",
-                                    value=backend_after,
-                                    height=110,
-                                    key="pro_result_backend"
-                                )
-
-                                st.markdown("### 🧩 Attribute Strategy")
-                                attr_rows = [{
-                                    "Attribute": x.get("attribute", ""),
-                                    "Current": x.get("current", ""),
-                                    "Recommended": x.get("recommended", ""),
-                                    "Status": x.get("status", ""),
-                                    "Reason": x.get("reason", "")
-                                } for x in ai_result.get("attribute_strategy", []) or []]
-                                if attr_rows:
-                                    st.dataframe(
-                                        pd.DataFrame(attr_rows),
-                                        use_container_width=True,
-                                        hide_index=True
-                                    )
-
-                                st.markdown("### 🗂️ Category / Browse Strategy")
-                                cat = ai_result.get("category_strategy", {}) or {}
-                                status = cat.get("status", "VERIFY")
-                                if status == "MISMATCH_RISK":
-                                    st.error("⚠️ Category mismatch risk.")
-                                elif status == "VERIFY":
-                                    st.warning("⚠️ Category requires verification.")
-                                else:
-                                    st.success("Category appears aligned based on supplied information.")
-                                st.write(cat.get("finding", ""))
-                                st.write("**Action:**", cat.get("recommended_action", ""))
-                                for field in cat.get("seller_panel_fields_to_verify", []) or []:
-                                    st.write("•", field)
-
-                                if run_images:
-                                    st.markdown("### 🖼️ Image Audit")
-                                    image_rows = [{
-                                        "Image": x.get("image", ""),
-                                        "Finding": x.get("finding", ""),
-                                        "Action": x.get("recommended_action", "")
-                                    } for x in ai_result.get("image_audit", []) or []]
-                                    if image_rows:
-                                        st.dataframe(
-                                            pd.DataFrame(image_rows),
-                                            use_container_width=True,
-                                            hide_index=True
-                                        )
-
-                                verification = ai_result.get("verification_required", []) or []
-                                if verification:
-                                    st.markdown("### ⚠️ Verify Before Publishing")
-                                    for item in verification:
-                                        st.write("•", item)
-
-                                checklist = ai_result.get("publish_checklist", []) or []
-                                if checklist:
-                                    st.markdown("### ✅ Publish Checklist")
-                                    for item in checklist:
-                                        st.write("☐", item)
-
-                                st.markdown("### 🔄 Before → After")
-                                st.write("**Title**")
-                                st.code(existing_title + "\n\n→\n\n" + title_after)
-                                st.write("**Description**")
-                                st.code(existing_desc + "\n\n→\n\n" + str(desc_after))
-
-                                export_data = {
-                                    "marketplace": marketplace,
-                                    "id": audit_id,
-                                    "rule_engine": rule_result,
-                                    "ai_audit": ai_result
-                                }
-                                st.download_button(
-                                    "📥 Download Complete Audit JSON",
-                                    data=json.dumps(
-                                        export_data, ensure_ascii=False, indent=2
-                                    ).encode("utf-8"),
-                                    file_name=f"listing_audit_{audit_id or 'product'}.json",
-                                    mime="application/json",
-                                    key="pro_download_json"
-                                )
-
-                        except Exception as audit_error:
-                            st.error(f"Deep Audit Error: {audit_error}")
-
-    with bulk_tab:
-        st.subheader("📦 Bulk Listing Auditor")
-        st.caption(
-            "CSV columns supported: marketplace, sku/asin, title, bullets, description, "
-            "backend_keywords, attributes, verified_facts, target_keywords, category, "
-            "product_type, browse_node."
+def variant_quality(variants, marketplace):
+    rows = []
+    seen = []
+    for v in variants:
+        title = s(v.get("title"))
+        sim = max([local_similarity(title, x) for x in seen], default=0)
+        audit = audit_listing(
+            marketplace, title, v.get("item_highlights",""),
+            "\n".join(v.get("bullets",[]) if isinstance(v.get("bullets"), list) else bullets(v.get("bullets",""))),
+            v.get("description",""), v.get("backend_keywords","")
         )
-        bulk_file = st.file_uploader(
-            "Upload Listing CSV", type=["csv"], key="pro_bulk_csv"
+        rows.append({
+            "Variant": v.get("variant_no"),
+            "Angle": s(v.get("angle")),
+            "Title": title,
+            "Title chars": len(title),
+            "Similarity vs prior title %": sim,
+            "Audit score": audit["score"],
+            "Status": audit["status"],
+        })
+        seen.append(title)
+    return pd.DataFrame(rows)
+
+# ============================================================
+# BUSINESS REPORT HEALTH ENGINE
+# ============================================================
+def business_health(df):
+    rename = {}
+    for c in df.columns:
+        lc = c.lower().strip()
+        if "asin" in lc:
+            rename[c] = "ASIN"
+        elif "sku" == lc or lc.endswith("sku"):
+            rename[c] = "SKU"
+        elif "sessions" in lc:
+            rename[c] = "Sessions"
+        elif "units ordered" in lc:
+            rename[c] = "Orders"
+        elif "unit session" in lc:
+            rename[c] = "Conversion"
+        elif "ordered product sales" in lc or lc == "sales":
+            rename[c] = "Sales"
+        elif "title" in lc:
+            rename[c] = "Title"
+    x = df.rename(columns=rename).copy()
+    for c in ["Sessions","Orders","Sales"]:
+        if c in x:
+            x[c] = pd.to_numeric(x[c], errors="coerce").fillna(0)
+    if "Conversion" not in x and {"Sessions","Orders"} <= set(x.columns):
+        x["Conversion"] = (x["Orders"] / x["Sessions"].replace(0, pd.NA) * 100).fillna(0)
+    if "Orders" in x and "Sessions" in x:
+        x["Diagnosis"] = x.apply(
+            lambda r: "NO/LOW TRAFFIC DATA" if r["Sessions"] < 20 and r["Orders"] == 0
+            else ("TRAFFIC OK → CHECK CONVERSION" if r["Sessions"] >= 50 and r["Orders"] == 0
+                  else ("CONVERSION REVIEW" if r["Orders"] > 0 and r["Conversion"] < 1.0
+                        else "NORMAL / MONITOR")),
+            axis=1,
         )
+    return x
 
-        if bulk_file:
-            try:
-                bulk_df = pd.read_csv(bulk_file)
-                st.write(f"Loaded {len(bulk_df)} listings.")
-                st.dataframe(
-                    bulk_df.head(10), use_container_width=True, hide_index=True
-                )
+# ============================================================
+# UI
+# ============================================================
+st.sidebar.title("🛍️ Pure Vastra Seller Suite V4")
+st.sidebar.caption("New Listing • Multi-Listing • Bulk • Audit • Profit • Labels • Health")
 
-                if st.button("⚡ Run Bulk Rule Audit", key="run_bulk_rule_audit"):
-                    results = []
-                    for idx, row in bulk_df.iterrows():
-                        marketplace_b = str(row.get("marketplace", "Amazon India"))
-                        if marketplace_b not in PLATFORM_PROFILES:
-                            marketplace_b = "Amazon India"
+st.sidebar.markdown("### Gemini AI")
+key_input = st.sidebar.text_input("Gemini API Key", type="password", key="gemini_key_input")
+if key_input:
+    st.session_state.gemini_key = key_input
+st.sidebar.caption("AI is optional for deterministic audits and calculators.")
 
-                        rr = run_deterministic_listing_audit(
-                            marketplace=marketplace_b,
-                            title=row.get("title", ""),
-                            bullets=row.get("bullets", ""),
-                            description=row.get("description", ""),
-                            backend_terms=row.get("backend_keywords", ""),
-                            attributes=row.get("attributes", ""),
-                            verified_facts=row.get("verified_facts", ""),
-                            target_keywords=row.get("target_keywords", ""),
-                            category=row.get("category", ""),
-                            product_type=row.get("product_type", ""),
-                            browse_node=row.get("browse_node", "")
-                        )
-                        results.append({
-                            "ID": row.get(
-                                "sku/asin",
-                                row.get("sku", row.get("asin", idx))
-                            ),
-                            "Marketplace": marketplace_b,
-                            "Rule Score": rr["score"],
-                            "Critical": sum(
-                                x["severity"] == "CRITICAL" for x in rr["issues"]
-                            ),
-                            "High": sum(
-                                x["severity"] == "HIGH" for x in rr["issues"]
-                            ),
-                            "Medium": sum(
-                                x["severity"] == "MEDIUM" for x in rr["issues"]
-                            ),
-                            "Title Chars": rr["title_length"],
-                            "Bullets": rr["bullet_count"],
-                            "Missing Keywords": ", ".join(rr["missing_keywords"]),
-                            "Top Fix": (
-                                rr["issues"][0]["recommended_fix"]
-                                if rr["issues"] else "No obvious rule issue"
-                            )
-                        })
+mode = st.sidebar.radio(
+    "Select Module",
+    [
+        "🆕 New Single Listing",
+        "🔁 Multi-Listing Generator",
+        "📦 Bulk Listing Builder",
+        "🔍 Listing Auditor",
+        "📊 Listing Health Center",
+        "💰 Profit & Margin Calculator",
+        "🧮 Price / Break-even Simulator",
+        "🧾 PDF Label Cropper",
+        "👗 AI Virtual Model Studio",
+        "⚙️ Methodology & Templates",
+    ],
+)
 
-                    result_df = pd.DataFrame(results)
-                    st.subheader("📊 Bulk Audit Results")
-                    st.dataframe(
-                        result_df, use_container_width=True, hide_index=True
-                    )
-                    st.download_button(
-                        "📥 Download Bulk Audit CSV",
-                        data=result_df.to_csv(index=False).encode("utf-8-sig"),
-                        file_name="listing_audit_bulk_results.csv",
-                        mime="text/csv",
-                        key="download_bulk_audit"
-                    )
-            except Exception as bulk_error:
-                st.error(f"Bulk CSV Error: {bulk_error}")
+# ============================================================
+# NEW SINGLE LISTING
+# ============================================================
+if mode == "🆕 New Single Listing":
+    st.title("🆕 New Single Listing Builder")
+    st.info("Verified-facts-first workflow. AI can rewrite content, but it cannot invent product specifications.")
 
-    with methodology_tab:
-        st.subheader("📚 Auditor Scope")
-        st.markdown("""
-        **Content:** title, bullets, description, keyword coverage, redundancy and backend terms.
+    marketplace = st.selectbox("Marketplace", list(MARKETPLACE))
+    c1, c2 = st.columns(2)
+    with c1:
+        product_name = st.text_input("Product / Base Name")
+        category = st.text_input("Category / Browse Path")
+        product_type = st.text_input("Product Type / Item Type Keyword")
+        target_customer = st.text_input("Target Customer / Use Case")
+    with c2:
+        target_keywords = st.text_area("Target Keywords (comma separated)")
+        facts = st.text_area("VERIFIED PRODUCT FACTS (one per line)", height=180,
+                              placeholder="Fabric: Linen Cotton\nColour: Baby Pink\nPattern: Digital Floral Print\nWork: Mirror Work\nIncluded Components: Blouse Piece")
+    imgs = st.file_uploader("Product Images (up to 6)", type=["jpg","jpeg","png"], accept_multiple_files=True, key="new_imgs")
 
-        **Catalog:** product type, category/browse path, attribute completeness and
-        conflicts against verified product facts.
-
-        **Images:** image observations, consistency with supplied facts, visibility and
-        potential quality/content issues.
-
-        **Conversion readiness:** product identity, feature hierarchy, included components,
-        use/occasion clarity and unsupported claims.
-
-        **Important:** this is an audit assistant, not a private marketplace ranking oracle.
-        Marketplace/category rules can change. Fields marked VERIFY must be checked in the
-        current seller/supplier panel before publishing.
-        """)
-# ==========================================
-# MODE 3: BULK CSV CATALOG GENERATOR
-# ==========================================
-elif app_mode == "Bulk CSV Catalog Generator":
-    st.title("📁 Bulk CSV Catalog & Listing Generator")
-    st.markdown("Multiple products ke liye categories enter karein aur ek sath SEO optimized listings aur CSV format generate karein.")
-    
-    categories_input = st.text_area("Enter Product Categories / Items (one per line):", "Designer Silk Saree\nEmbroidered Kurti Set\nFestive Lehenga Choli")
-
-    if st.button("Generate Bulk CSV Data"):
-        if not gemini_api_key:
-            st.warning("⚠️ Kripya pehle Gemini API Key configure karein.")
-        else:
-            with st.spinner("Generating bulk catalog data..."):
-                try:
-                    model = get_working_model()
-                    bulk_prompt = f"""Generate bulk e-commerce catalog data for the following categories:
-                    {categories_input}
-                    
-                    Return a clean structured analysis with complete Titles, Bullet Points, Descriptions, and Search Keywords for Amazon, Flipkart, and Meesho."""
-                    
-                    response = safe_generate_content(model, bulk_prompt)
-                    st.markdown("### 📋 Generated Bulk Data")
-                    st.write(response.text)
-                    
-                    df_dummy = pd.DataFrame({
-                        "Category": categories_input.split("\n"),
-                        "Status": ["Ready for Marketplace"] * len(categories_input.split("\n"))
-                    })
-                    csv_data = df_dummy.to_csv(index=False).encode('utf-8')
-                    st.download_button(
-                        label="📥 Download Bulk CSV Template",
-                        data=csv_data,
-                        file_name="bulk_ecommerce_catalog.csv",
-                        mime="text/csv"
-                    )
-                except Exception as e:
-                    st.error(f"Error: {e}")
-
-# ==========================================
-# MODE 4: PROFIT MARGIN & COMMISSION CALCULATOR
-# ==========================================
-elif app_mode == "Profit Margin & Commission Calculator":
-    st.title("💰 E-Commerce Profit Margin & Commission Calculator")
-    st.markdown("Amazon, Flipkart, aur Meesho par selling cost, commission, shipping, aur net profit calculate karein.")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        cost_price = st.number_input("Product Cost Price (₹):", min_value=0.0, value=500.0)
-        selling_price = st.number_input("Target Selling Price (₹):", min_value=0.0, value=1299.0)
-    with col2:
-        shipping_cost = st.number_input("Shipping & Packaging Cost (₹):", min_value=0.0, value=70.0)
-        ad_spend = st.number_input("Estimated Ad Spend per Item (₹):", min_value=0.0, value=50.0)
-        
-    platform = st.selectbox("Select Marketplace:", ["Amazon India", "Flipkart", "Meesho"])
-    
-    if st.button("Calculate Net Profit"):
-        commission_rate = 0.15 if platform == "Amazon India" else (0.12 if platform == "Flipkart" else 0.08)
-        referral_fee = selling_price * commission_rate
-        gst_on_fee = referral_fee * 0.18
-        total_deductions = cost_price + shipping_cost + ad_spend + referral_fee + gst_on_fee
-        net_profit = selling_price - total_deductions
-        margin_percentage = (net_profit / selling_price) * 100 if selling_price > 0 else 0
-        
-        st.markdown("### 📊 Financial Breakdown")
-        m_col1, m_col2, m_col3 = st.columns(3)
-        m_col1.metric("Referral Fee + GST", f"₹{referral_fee + gst_on_fee:.2f}")
-        m_col2.metric("Net Profit", f"₹{net_profit:.2f}", delta=f"{margin_percentage:.1f}% Margin")
-        m_col3.metric("Total Expenses", f"₹{total_deductions:.2f}")
-        
-        if net_profit > 0:
-            st.success("✅ Yeh product profitable hai! Aap iske sath aage badh sakte hain.")
-        else:
-            st.warning("⚠️ Is price par aapko loss ho sakta hai. Selling price badhayein ya cost kam karein.")
-
-# ==========================================
-# MODE 5: AI VIRTUAL MODEL STUDIO
-# ==========================================
-elif app_mode == "AI Virtual Model Studio (Gemini Powered)":
-    st.title("👗 AI Virtual Model Studio (One-by-One Generation & Download)")
-    st.markdown("""
-    <div style="background-color: #f0f2f6; padding: 10px; border-radius: 8px; margin-bottom: 15px;">
-    <b>Smart Protection Feature:</b> Yeh studio aapke uploaded garment ke <b>exact color, prints, borders, aur fabric quality ko 100% lock</b> rakhta hai. Aap apni pasand ka ek-ek background chun kar image generate aur download kar sakte hain.
-    </div>
-    """, unsafe_allow_html=True)
-    
-    if not gemini_api_key:
-        st.warning("⚠️ Kripya sidebar mein apni Gemini API Key enter karein (ya Streamlit Secrets configure karein).")
-    
-    garment_files = st.file_uploader("Upload Photos of the Garment (Max 3 angles)", type=["jpg", "jpeg", "png"], accept_multiple_files=True, key="gemini_vton_uploader_single")
-    
-    if garment_files and gemini_api_key:
-        if len(garment_files) > 3:
-            st.warning("⚠️ Please upload a maximum of 3 photos.")
-            garment_files = garment_files[:3]
-            
-        st.markdown("### 📸 Uploaded Garment Preview (Locked Reference):")
-        cols = st.columns(len(garment_files))
-        opened_images = []
-        for i, file in enumerate(garment_files):
-            img = Image.open(file)
-            opened_images.append(img)
+    if imgs:
+        imgs = imgs[:6]
+        cols = st.columns(min(6, len(imgs)))
+        for i, im in enumerate(imgs):
             with cols[i]:
-                st.image(img, caption=f"Angle {i+1}", use_container_width=True)
-                
-        if "locked_garment_profile" not in st.session_state:
-            st.session_state.locked_garment_profile = None
-            
-        if st.button("🔒 Step 1: Lock Garment & Analyze via Gemini"):
-            with st.spinner("Analyzing and locking exact garment attributes..."):
-                try:
-                    model = get_working_model()
-                    lock_prompt = [
-                        """Strictly analyze these garment images. Create a master reference profile that locks the exact fabric color, precise dye shade, weave pattern, border designs, and unique motifs without altering any detail. 
-                        Prepare a strict description for a professional e-commerce fashion catalog featuring a model wearing this exact unalterable garment.""",
-                        *opened_images
-                    ]
-                    response = safe_generate_content(model, lock_prompt)
-                    if response.text:
-                        st.session_state.locked_garment_profile = response.text.strip()
-                        st.success("✅ Garment Successfully Locked! Color, pattern, and quality parameters secured.")
-                    else:
-                        st.error("Analysis failed to return text. Please try again.")
-                except Exception as e:
-                    st.error(f"Analysis Error: {e}")
-                    
-        if st.session_state.locked_garment_profile:
-            st.markdown("---")
-            st.subheader("🎯 Step 2: Choose Algorithm & Generate Single Catalog Image")
-            
-            algo_choice = st.selectbox(
-                "Target Marketplace Algorithm Optimizer:",
-                [
-                    "Amazon A9/A10 Algorithm (High Search Keyword & Conversion Focus)",
-                    "Flipkart Algorithm (Value & Catalog Clarity Focus)",
-                    "Meesho Prism Algorithm (Budget & Trendy Visual Focus)"
-                ]
-            )
-            
-            environments = {
-                "E-Commerce Pure White Studio": "Professional e-commerce catalog studio photography, 100% pure white background, bright studio softbox lighting, high conversion layout",
-                "Lush Green Garden Outdoor": "Outdoor natural lifestyle setting, botanical garden background, soft natural sunlight, high-end catalog look",
-                "Modern Luxury Boutique Interior": "High-end luxury fashion boutique interior background, sophisticated designer racks, warm premium atmospheric lighting",
-                "Traditional Heritage Courtyard": "Traditional Indian heritage courtyard background, ethnic architecture, warm terracotta tones, royal ethnic aesthetics",
-                "Golden Hour Sunset Urban": "Outdoor sunset golden hour setting, warm glowing sunlight flare, urban chic aesthetic background, high resolution",
-                "Modern Fashion Street Runway": "Modern urban city street fashion runway background, stylish architectural backdrop, dynamic street style lighting, high resolution"
-            }
-            
-            selected_env_name = st.selectbox("Select Background/Environment:", list(environments.keys()))
-            
-            if st.button("🚀 Generate Selected Catalog Image"):
-                with st.spinner(f"Generating catalog for '{selected_env_name}' with locked garment details..."):
-                    try:
-                        model = get_working_model()
-                        env_style = environments[selected_env_name]
-                        
-                        generation_instruction = f"""
-                        Generate a professional high-resolution e-commerce catalog visual optimized for {algo_choice}.
-                        Strict Instruction: The garment worn by the professional fashion model must strictly match this locked specification: '{st.session_state.locked_garment_profile}'. 
-                        Do not change the garment color, design, pattern, or fabric quality under any circumstances.
-                        Background Setting: {env_style}.
-                        Provide a vivid descriptive prompt for image rendering.
-                        """
-                        
-                        prompt_response = safe_generate_content(model, generation_instruction)
-                        if prompt_response.text:
-                            optimized_prompt_text = prompt_response.text.strip()
-                        else:
-                            optimized_prompt_text = f"A professional fashion model wearing the exact garment described as {st.session_state.locked_garment_profile}, set in {env_style}, high resolution e-commerce catalog photography."
-                        
-                        encoded_prompt = urllib.parse.quote(optimized_prompt_text[:400])
-                        seed_val = int(time.time())
-                        target_url = f"https://pollinations.ai/p/{encoded_prompt}?width=768&height=1024&nologo=true&seed={seed_val}"
-                        
-                        img_resp = requests.get(target_url, timeout=30)
-                        if img_resp.status_code == 200:
-                            image_bytes = io.BytesIO(img_resp.content)
-                            st.success(f"🎉 Successfully generated: {selected_env_name}!")
-                            st.image(image_bytes, caption=selected_env_name, use_container_width=True)
-                            
-                            st.download_button(
-                                label=f"📥 Download {selected_env_name}",
-                                data=img_resp.content,
-                                file_name=f"catalog_{selected_env_name.lower().replace(' ', '_')}.jpg",
-                                mime="image/jpeg"
-                            )
-                        else:
-                            st.error("Image generation service busy. Kripya dobara click karein.")
-                            
-                    except Exception as gen_err:
-                        st.error(f"Generation Error: {gen_err}")
+                st.image(im, caption=f"Image {i+1}", use_container_width=True)
 
-# ==========================================
-# MODE 6: SMART SHIPPING LABEL CROPPER & PARTNER SORTER
-# ==========================================
-elif app_mode == "Smart Shipping Label Cropper & Sorter":
-    st.title("✂️ Smart Shipping Label Cropper & Thermal Converter")
-    st.markdown("""
-    <div style="background-color: #f0f2f6; padding: 10px; border-radius: 8px; margin-bottom: 15px;">
-    <b>Advanced E-Commerce Tool:</b> Multiple shipping label PDFs ya images yahan upload karein. Yeh tool invoices ko analyze karega, delivery partners ke hisaab se sort karega aur SKU pick-list summary banayega.
-    </div>
-    """, unsafe_allow_html=True)
-    
-    selected_marketplace = st.selectbox(
-        "Select Source Marketplace Preset:",
-        ["Flipkart Seller Hub", "Amazon Shipping / Easy Ship", "Meesho Supplier Panel", "Multi-Marketplace Mixed Batch"]
-    )
-    
-    label_files = st.file_uploader("Upload Shipping Label Files (PDF or Images)", type=["jpg", "jpeg", "png", "pdf"], accept_multiple_files=True, key="label_crop_files")
-    
-    if label_files:
-        st.markdown(f"### 📄 Uploaded Files Count: {len(label_files)}")
-        
-        gemini_payload_parts = []
-        for file in label_files:
-            try:
-                # Safe file bytes reading
-                file_bytes = file.read()
-                file.seek(0) # Reset pointer
-                
-                if file.type == "application/pdf" or file.name.lower().endswith('.pdf'):
-                    st.info(f"📂 PDF Loaded Successfully: {file.name} ({len(file_bytes) / 1024:.1f} KB)")
-                    gemini_payload_parts.append({
-                        "mime_type": "application/pdf",
-                        "data": file_bytes
-                    })
-                else:
-                    img = Image.open(file)
-                    st.image(img, caption=f"Image: {file.name}", width=300)
-                    gemini_payload_parts.append(img)
-            except Exception as load_err:
-                st.error(f"Error reading file {file.name}: {load_err}")
-                
-        if not gemini_api_key:
-            st.warning("⚠️ Kripya pehle sidebar mein Gemini API Key enter karein.")
+    if st.button("🚀 Generate New Listing", type="primary"):
+        if not product_name or not facts:
+            st.warning("Product name aur verified facts required hain.")
         else:
-            if st.button("🚀 Process, Analyze & Sort by Partner / SKU"):
-                with st.spinner("Analyzing shipping label files via Gemini AI, filtering invoices, and sorting by partner & SKU..."):
-                    try:
-                        model = get_working_model()
-                        cropper_prompt = [
-                            f"""Act as an expert E-Commerce Logistics & Thermal Label Cropper Tool.
-                            Source Platform Preset: {selected_marketplace}
-                            
-                            Analyze the uploaded shipping label document(s)/image(s):
-                            1. **Invoice & Margin Removal:** Identify and separate tax invoice sections from the actual logistics shipping label.
-                            2. **Delivery Partner Detection:** Automatically classify each label based on courier logos/text (e.g., Flipkart Ekart, Amazon Shipping, Delhivery, Shadowfax, Xpressbees, Valmo/Meesho).
-                            3. **SKU-wise Sorting & Pick-List Summary:** Group orders by SKU/Item and provide a consolidated pick-list summary.
-                            4. **Thermal 4x6 Layout Instructions:** Provide exact formatting details for thermal printing.
-                            
-                            Provide clean structured output with clear headings for Partner Sorting, SKU Pick-list Summary, and Cropping Instructions.""",
-                        ]
-                        cropper_payload = cropper_prompt + gemini_payload_parts
-                            
-                        response = safe_generate_content(model, cropper_payload)
-                        st.markdown("### 📊 Smart Label Sorting & Analysis Report")
-                        st.write(response.text)
-                        
-                        st.success("✅ Files successfully processed and sorted by courier partner & SKU!")
-                    except Exception as e:
-                        st.error(f"Processing Error: {e}")
+            with st.spinner("Generating marketplace-ready draft..."):
+                data, err = None, None
+                try:
+                    data, err = generate = None, None
+                    prompt = f"""
+Create one new factual listing for {marketplace}. Return JSON only.
+Product: {product_name}
+Category: {category}
+Product type: {product_type}
+Target customer/use: {target_customer}
+Verified facts:
+{facts}
+Target keywords: {target_keywords}
+Rules: never invent facts, never claim ranking guarantees, avoid keyword stuffing and unsupported superlatives.
+For Amazon India Item Name <=75 chars and Item Highlights <=125 chars.
+JSON keys: title,item_highlights,bullets,description,backend_keywords,attribute_suggestions,verification_required,publish_checklist.
+"""
+                    payload = [prompt] + image_list(imgs)
+                    resp = ai_generate(payload)
+                    data = safe_json(resp.text)
+                    if not data:
+                        st.error("AI response JSON format mein nahi aaya. Raw response:")
+                        st.write(resp.text)
+                    else:
+                        st.success("Draft generated. Publish se pehle verification required fields check karein.")
+                        st.subheader("Title")
+                        st.code(s(data.get("title")))
+                        if marketplace == "Amazon India":
+                            st.subheader("Item Highlights")
+                            st.code(s(data.get("item_highlights")))
+                        st.subheader("Bullets")
+                        for x in data.get("bullets", []):
+                            st.write("•", x)
+                        st.subheader("Description")
+                        st.write(s(data.get("description")))
+                        st.subheader("Backend/Search Keywords")
+                        st.code(s(data.get("backend_keywords")))
+                        st.subheader("Verification Required")
+                        st.write(data.get("verification_required", []))
+                        st.subheader("Publish Checklist")
+                        st.write(data.get("publish_checklist", []))
+                        st.download_button("📥 Download JSON", json.dumps(data, ensure_ascii=False, indent=2), "new_listing.json", "application/json")
+                except Exception as e:
+                    st.error(f"Generation error: {e}")
+
+# ============================================================
+# MULTI-LISTING GENERATOR
+# ============================================================
+elif mode == "🔁 Multi-Listing Generator":
+    st.title("🔁 Multi-Listing / Content Variant Generator")
+    st.warning("This creates content variants for the SAME physical product. It does not certify that separate duplicate marketplace catalogs are permitted.")
+
+    marketplace = st.selectbox("Marketplace", list(MARKETPLACE), key="multi_market")
+    base = st.text_input("Base Product Name", value="Pure Vastra Linen Cotton Saree")
+    category = st.text_input("Category", value="Sarees")
+    product_type = st.text_input("Product Type", value="Saree")
+    facts = st.text_area("🔒 LOCKED VERIFIED FACTS", height=180,
+                         value="Fabric: Linen Cotton\nColour: Baby Pink\nPattern: Digital Floral Print\nWork: Mirror Work\nPallu: Tassel\nIncluded Components: Blouse Piece")
+    kws = st.text_area("Target Keywords", value="linen cotton saree, baby pink saree, digital floral saree, mirror work saree")
+    count = st.slider("Number of variants", 2, 20, 5)
+
+    strategies_all = [
+        "Fabric + comfort focus",
+        "Print + design focus",
+        "Mirror work / embellishment focus",
+        "Occasion focus",
+        "Pallu + tassel detail focus",
+        "Blouse-piece / set completeness focus",
+        "Colour + styling focus",
+        "Gift / festive use focus",
+        "Minimal concise keyword-first focus",
+        "Long-tail search-intent focus",
+    ]
+    strategies = st.multiselect("Variation strategies", strategies_all, default=strategies_all[:min(5,count)])
+    if len(strategies) < count:
+        st.caption("Strategies repeat only after the selected strategy pool is exhausted; facts remain locked.")
+
+    if st.button("🚀 Generate Multiple Listing Variants", type="primary"):
+        try:
+            prompt = make_variant_prompt(marketplace, base, facts, category, product_type, kws, count, strategies)
+            resp = ai_generate([prompt])
+            data = safe_json(resp.text)
+            if not data or not isinstance(data.get("variants"), list):
+                st.error("AI JSON parse failed.")
+                st.write(resp.text)
+            else:
+                variants = data["variants"][:count]
+                qdf = variant_quality(variants, marketplace)
+                st.subheader("Variant Quality Dashboard")
+                st.dataframe(qdf, use_container_width=True)
+
+                # Exact duplicate title detection
+                titles = [norm(v.get("title")).lower() for v in variants]
+                dupes = {t for t in titles if titles.count(t) > 1 and t}
+                if dupes:
+                    st.error("Duplicate titles detected: " + ", ".join(dupes))
+                else:
+                    st.success("No exact duplicate titles detected.")
+
+                st.subheader("Generated Variants")
+                for v in variants:
+                    with st.expander(f"Variant {v.get('variant_no')} — {v.get('angle','')}"):
+                        st.markdown("**Title**")
+                        st.code(s(v.get("title")))
+                        if marketplace == "Amazon India":
+                            st.markdown("**Item Highlights**")
+                            st.code(s(v.get("item_highlights")))
+                        st.markdown("**Bullets**")
+                        for x in v.get("bullets", []):
+                            st.write("•", x)
+                        st.markdown("**Description**")
+                        st.write(s(v.get("description")))
+                        st.markdown("**Backend Keywords**")
+                        st.code(s(v.get("backend_keywords")))
+
+                export_rows = []
+                for v in variants:
+                    export_rows.append({
+                        "marketplace": marketplace,
+                        "base_product": base,
+                        "variant_no": v.get("variant_no"),
+                        "angle": v.get("angle"),
+                        "title": v.get("title"),
+                        "item_highlights": v.get("item_highlights"),
+                        "bullets": " | ".join(v.get("bullets", [])),
+                        "description": v.get("description"),
+                        "backend_keywords": v.get("backend_keywords"),
+                        "keyword_focus": ", ".join(v.get("keyword_focus", [])),
+                        "locked_facts_check": v.get("locked_facts_check"),
+                    })
+                out = pd.DataFrame(export_rows)
+                st.download_button("📥 Download Multi-Listing CSV", out.to_csv(index=False).encode("utf-8-sig"),
+                                   "multi_listing_variants.csv", "text/csv")
+        except Exception as e:
+            st.error(f"Variant generation error: {e}")
+
+# ============================================================
+# BULK LISTING BUILDER
+# ============================================================
+elif mode == "📦 Bulk Listing Builder":
+    st.title("📦 Bulk Listing Builder & Bulk Audit")
+    st.markdown("CSV-based production workflow. Existing content can be audited; blank rows can be prepared for AI generation.")
+
+    template = pd.DataFrame([{
+        "marketplace": "Amazon India",
+        "sku_asin": "PV-001",
+        "base_product": "Linen Cotton Saree",
+        "title": "",
+        "item_highlights": "",
+        "bullets": "",
+        "description": "",
+        "backend_keywords": "",
+        "attributes": "Fabric: Linen Cotton\nColour: Baby Pink",
+        "verified_facts": "Fabric: Linen Cotton\nColour: Baby Pink\nPattern: Digital Floral Print",
+        "target_keywords": "linen cotton saree, baby pink saree",
+        "category": "Sarees",
+        "product_type": "Saree",
+        "browse_node": "",
+        "variant_count": 1,
+        "variation_strategies": "Fabric focus|Design focus|Occasion focus",
+    }])
+    st.download_button("📥 Download Master CSV Template", template.to_csv(index=False).encode("utf-8-sig"),
+                       "pure_vastra_bulk_listing_template.csv", "text/csv")
+
+    f = st.file_uploader("Upload Bulk CSV", type=["csv"], key="bulk_csv")
+    if f:
+        df = pd.read_csv(f)
+        st.success(f"{len(df)} rows loaded.")
+        st.dataframe(df.head(20), use_container_width=True)
+
+        if st.button("🔍 Run Bulk Audit"):
+            result = []
+            for i, r in df.iterrows():
+                mp = s(r.get("marketplace")) or "Amazon India"
+                if mp not in MARKETPLACE:
+                    mp = "Amazon India"
+                a = audit_listing(mp, r.get("title",""), r.get("item_highlights",""),
+                                  r.get("bullets",""), r.get("description",""),
+                                  r.get("backend_keywords",""), r.get("attributes",""),
+                                  r.get("verified_facts",""), r.get("target_keywords",""),
+                                  r.get("category",""), r.get("product_type",""), r.get("browse_node",""))
+                result.append({
+                    "row": i+1, "marketplace": mp, "sku_asin": s(r.get("sku_asin")),
+                    "base_product": s(r.get("base_product")), "audit_score": a["score"],
+                    "status": a["status"],
+                    "critical_issues": " | ".join(x[1] for x in a["critical"]),
+                    "warnings": " | ".join(x[1] for x in a["warnings"]),
+                })
+            out = pd.DataFrame(result)
+            st.dataframe(out, use_container_width=True)
+            st.download_button("📥 Download Bulk Audit CSV", out.to_csv(index=False).encode("utf-8-sig"),
+                               "bulk_audit.csv", "text/csv")
+
+# ============================================================
+# LISTING AUDITOR
+# ============================================================
+elif mode == "🔍 Listing Auditor":
+    st.title("🔍 Deep Listing Auditor")
+    marketplace = st.selectbox("Marketplace", list(MARKETPLACE), key="audit_market")
+    c1,c2 = st.columns(2)
+    with c1:
+        title = st.text_input("Current Title")
+        highlights = st.text_area("Item Highlights / Key Highlights")
+        bullets_text = st.text_area("Bullets", height=140)
+        description = st.text_area("Description", height=180)
+    with c2:
+        backend = st.text_area("Backend/Search Keywords")
+        attributes = st.text_area("Current Attributes (key: value)", height=120)
+        facts = st.text_area("Verified Facts (key: value)", height=120)
+        kws = st.text_area("Target Keywords (comma separated)")
+        category = st.text_input("Category / Browse Path")
+        product_type = st.text_input("Product Type")
+        browse = st.text_input("Browse Node / Catalog Node")
+
+    if st.button("🔍 Audit Listing", type="primary"):
+        a = audit_listing(marketplace, title, highlights, bullets_text, description, backend,
+                          attributes, facts, kws, category, product_type, browse)
+        c1,c2,c3 = st.columns(3)
+        c1.metric("Audit Score", a["score"])
+        c2.metric("Status", a["status"])
+        c3.metric("Missing Keywords", len(a["missing_keywords"]))
+        st.subheader("Critical Issues")
+        for x in a["critical"]:
+            st.error(f"{x[0]} — {x[1]}: {x[2]}")
+        st.subheader("Warnings")
+        for x in a["warnings"]:
+            st.warning(f"{x[0]} — {x[1]}: {x[2]}")
+        st.subheader("Passed Checks")
+        for x in a["passed"]:
+            st.success(x)
+
+# ============================================================
+# LISTING HEALTH CENTER
+# ============================================================
+elif mode == "📊 Listing Health Center":
+    st.title("📊 Listing Health Center")
+    st.caption("Business Report CSV se traffic vs conversion diagnosis. It does not replace marketplace analytics.")
+
+    f = st.file_uploader("Upload Amazon Business Report CSV", type=["csv"], key="health_csv")
+    if f:
+        df = pd.read_csv(f)
+        h = business_health(df)
+        st.dataframe(h, use_container_width=True)
+        if "Diagnosis" in h:
+            st.subheader("Diagnosis Summary")
+            st.write(h["Diagnosis"].value_counts())
+        st.download_button("📥 Download Health Report", h.to_csv(index=False).encode("utf-8-sig"),
+                           "listing_health_report.csv", "text/csv")
+
+# ============================================================
+# PROFIT CALCULATOR
+# ============================================================
+elif mode == "💰 Profit & Margin Calculator":
+    st.title("💰 Profit & Margin Calculator")
+    st.caption("Marketplace fees are editable assumptions. Verify your current Seller/Supplier fee schedule before making pricing decisions.")
+
+    marketplace = st.selectbox("Marketplace", list(DEFAULT_FEES))
+    c1,c2,c3 = st.columns(3)
+    with c1:
+        selling = st.number_input("Selling Price (₹)", 0.0, 100000.0, 899.0)
+        product_cost = st.number_input("Product Cost (₹)", 0.0, 100000.0, 350.0)
+        packaging = st.number_input("Packaging (₹)", 0.0, 10000.0, 15.0)
+    with c2:
+        shipping = st.number_input("Shipping/Fulfilment (₹)", 0.0, 10000.0, 70.0)
+        ads = st.number_input("Ads per Order (₹)", 0.0, 10000.0, 30.0)
+        return_cost = st.number_input("Expected Return/NCX Cost per Order (₹)", 0.0, 10000.0, 25.0)
+    with c3:
+        referral_pct = st.number_input("Referral Fee %", 0.0, 100.0, DEFAULT_FEES[marketplace]["referral_pct"])
+        closing = st.number_input("Closing / Fixed Fee (₹)", 0.0, 10000.0, DEFAULT_FEES[marketplace]["closing"])
+        gst_rate = st.number_input("GST on Marketplace Fees %", 0.0, 100.0, 18.0)
+
+    if st.button("Calculate", type="primary"):
+        referral = selling * referral_pct / 100
+        fee_gst = (referral + closing) * gst_rate / 100
+        total_cost = product_cost + packaging + shipping + ads + return_cost + referral + closing + fee_gst
+        profit = selling - total_cost
+        margin = profit / selling * 100 if selling else 0
+        break_even = total_cost / max(1 - referral_pct/100, 0.01) if selling else 0
+
+        c1,c2,c3,c4 = st.columns(4)
+        c1.metric("Net Profit", f"₹{profit:,.2f}")
+        c2.metric("Net Margin", f"{margin:.2f}%")
+        c3.metric("Marketplace Fee + GST", f"₹{referral+closing+fee_gst:,.2f}")
+        c4.metric("Total Cost", f"₹{total_cost:,.2f}")
+
+        if profit > 0:
+            st.success("Positive contribution margin under these assumptions.")
+        else:
+            st.error("Negative contribution margin under these assumptions.")
+
+# ============================================================
+# PRICE SIMULATOR
+# ============================================================
+elif mode == "🧮 Price / Break-even Simulator":
+    st.title("🧮 Price & Break-even Simulator")
+    marketplace = st.selectbox("Marketplace", list(DEFAULT_FEES), key="sim_market")
+    base_cost = st.number_input("Fixed non-marketplace cost per order (₹)", 0.0, 100000.0, 500.0)
+    fee_pct = st.number_input("Marketplace fee %", 0.0, 100.0, DEFAULT_FEES[marketplace]["referral_pct"])
+    fee_fixed = st.number_input("Fixed marketplace fee (₹)", 0.0, 10000.0, 0.0)
+    gst_fee = st.number_input("GST on marketplace fees %", 0.0, 100.0, 18.0)
+    ad_pct = st.number_input("Ad cost % of selling price", 0.0, 100.0, 3.0)
+    low = st.number_input("Start price", 1.0, 100000.0, 599.0)
+    high = st.number_input("End price", 1.0, 100000.0, 1499.0)
+    step = st.number_input("Step", 1.0, 10000.0, 50.0)
+
+    if st.button("Build Price Table", type="primary"):
+        rows = []
+        p = low
+        while p <= high + 1e-9:
+            fee = p * fee_pct/100 + fee_fixed
+            fee_tax = fee * gst_fee/100
+            ads = p * ad_pct/100
+            profit = p - base_cost - fee - fee_tax - ads
+            rows.append({"Selling Price": round(p,2), "Marketplace Fee": round(fee,2),
+                         "Fee GST": round(fee_tax,2), "Ads": round(ads,2),
+                         "Net Profit": round(profit,2),
+                         "Margin %": round(profit/p*100,2)})
+            p += step
+        out = pd.DataFrame(rows)
+        st.dataframe(out, use_container_width=True)
+        st.download_button("📥 Download Price Scenarios", out.to_csv(index=False).encode("utf-8-sig"),
+                           "price_scenarios.csv", "text/csv")
+
+# ============================================================
+# PDF LABEL CROPPER
+# ============================================================
+elif mode == "🧾 PDF Label Cropper":
+    st.title("🧾 PDF Label Cropper & Sorter")
+    st.caption("Local PDF processing. No AI is required for basic page splitting/reordering.")
+
+    if PdfReader is None:
+        st.warning("Install pypdf from requirements.txt to enable PDF processing.")
+    else:
+        pdf = st.file_uploader("Upload PDF", type=["pdf"], key="label_pdf")
+        if pdf:
+            data = pdf.read()
+            reader = PdfReader(io.BytesIO(data))
+            st.success(f"{len(reader.pages)} pages loaded.")
+
+            c1,c2,c3 = st.columns(3)
+            with c1:
+                mode_crop = st.selectbox("Page mode", ["Keep pages", "2-up split", "4-up split"])
+            with c2:
+                order = st.selectbox("Order", ["Original", "Reverse"])
+            with c3:
+                start = st.number_input("Start page", 1, len(reader.pages), 1)
+
+            end = st.number_input("End page", int(start), len(reader.pages), len(reader.pages))
+            pages = list(range(int(start)-1, int(end)))
+            if order == "Reverse":
+                pages.reverse()
+
+            st.write("Selected pages:", [x+1 for x in pages])
+
+            if st.button("✂️ Create Output PDF", type="primary"):
+                # Keep-pages is lossless and reliable. For split modes, create quarter/half
+                # pages using pypdf transformations when page media boxes are available.
+                writer = PdfWriter()
+                for pi in pages:
+                    page = reader.pages[pi]
+                    if mode_crop == "Keep pages":
+                        writer.add_page(page)
+                    else:
+                        mb = page.mediabox
+                        w = float(mb.width)
+                        h = float(mb.height)
+                        if mode_crop == "2-up split":
+                            for side in range(2):
+                                new = reader.pages[pi]
+                                clone = new
+                                # CropBox clipping; original page object is not mutated permanently.
+                                clone = type(page)(page)
+                                if side == 0:
+                                    clone.cropbox.lower_left = (0, 0)
+                                    clone.cropbox.upper_right = (w/2, h)
+                                else:
+                                    clone.cropbox.lower_left = (w/2, 0)
+                                    clone.cropbox.upper_right = (w, h)
+                                writer.add_page(clone)
+                        else:
+                            for row in range(2):
+                                for col in range(2):
+                                    clone = type(page)(page)
+                                    clone.cropbox.lower_left = (col*w/2, row*h/2)
+                                    clone.cropbox.upper_right = ((col+1)*w/2, (row+1)*h/2)
+                                    writer.add_page(clone)
+
+                out = io.BytesIO()
+                writer.write(out)
+                out.seek(0)
+                st.success("Output PDF ready.")
+                st.download_button("📥 Download Cropped PDF", out.getvalue(),
+                                   "pure_vastra_labels_cropped.pdf", "application/pdf")
+
+# ============================================================
+# AI VIRTUAL MODEL STUDIO
+# ============================================================
+elif mode == "👗 AI Virtual Model Studio":
+    st.title("👗 AI Virtual Model Studio")
+    st.info("Garment-reference analysis is supported. Actual image rendering depends on the configured image-generation service.")
+    files = st.file_uploader("Upload garment reference images", type=["jpg","jpeg","png"], accept_multiple_files=True, key="vton")
+    if files:
+        imgs = image_list(files[:3])
+        cols = st.columns(len(imgs))
+        for i, im in enumerate(imgs):
+            with cols[i]:
+                st.image(im, caption=f"Reference {i+1}", use_container_width=True)
+        if st.button("🔒 Analyze & Lock Garment Facts"):
+            try:
+                resp = ai_generate([
+                    """Analyze the uploaded garment references for e-commerce use.
+Return JSON with only visually supportable observations: apparent colour, pattern, fabric if visually stated by seller, border/work details, pallu details, included components only if explicitly provided, and verification_required.
+Do not claim exact fabric composition from appearance alone.""",
+                    *imgs
+                ])
+                data = safe_json(resp.text)
+                if data:
+                    st.json(data)
+                    st.session_state["locked_garment_profile"] = data
+                else:
+                    st.write(resp.text)
+            except Exception as e:
+                st.error(str(e))
+
+# ============================================================
+# METHODOLOGY
+# ============================================================
+else:
+    st.title("⚙️ Methodology & Templates")
+    st.markdown("""
+### Core principles
+
+**1. Verified facts first**
+AI must not invent material, dimensions, certifications, quality claims, warranty or product features.
+
+**2. Multi-listing**
+The Multi-Listing Generator changes wording/angle while keeping the same physical product facts locked. It does not certify that separate duplicate marketplace catalogs are allowed.
+
+**3. Similarity control**
+Generated titles are compared using token-set similarity. Exact duplicates are flagged.
+
+**4. Marketplace rules**
+Marketplace profiles are configurable. Always verify the current Seller/Supplier panel and category template before publishing.
+
+**5. Performance diagnosis**
+Business Report analysis separates low-traffic situations from situations where traffic exists but conversion needs review.
+
+### Suggested bulk CSV columns
+
+`marketplace, sku_asin, base_product, title, item_highlights, bullets, description, backend_keywords, attributes, verified_facts, target_keywords, category, product_type, browse_node, variant_count, variation_strategies`
+
+### Recommended workflow
+
+Product facts → New Listing → Multi-Listing variants → Audit → Business Report Health → Profit check → Publish.
+""")
+    st.subheader("Amazon India current note")
+    st.info(MARKETPLACE["Amazon India"]["note"])
