@@ -473,6 +473,19 @@ mode = st.sidebar.radio(
 # ============================================================
 # NEW SINGLE LISTING
 # ============================================================
+
+# ============================================================
+# MARKETPLACE BULK TEMPLATE HELPERS
+# ============================================================
+TEMPLATE_DIR = os.path.join(os.path.dirname(__file__), "templates")
+
+def _template_bytes(filename):
+    p = os.path.join(TEMPLATE_DIR, filename)
+    if not os.path.exists(p):
+        return None
+    with open(p, "rb") as fh:
+        return fh.read()
+
 if mode == "🆕 New Single Listing":
     st.title("🆕 New Single Listing Builder")
     st.info("Verified-facts-first workflow. AI can rewrite content, but it cannot invent product specifications.")
@@ -665,6 +678,47 @@ elif mode == "📦 Bulk Listing Builder":
     st.download_button("📥 Download Master CSV Template", template.to_csv(index=False).encode("utf-8-sig"),
                        "pure_vastra_bulk_listing_template.csv", "text/csv")
 
+    st.divider()
+    st.subheader("🏪 Marketplace Bulk Listing Templates")
+    st.caption("Amazon/Meesho templates are based on the exact files you supplied. Flipkart's current bulk template is vertical-specific and generated inside Seller Hub.")
+
+    tc1, tc2, tc3 = st.columns(3)
+    with tc1:
+        st.markdown("**Amazon India — Saree**")
+        b = _template_bytes("Amazon_SAREE_Official_Template_2026_0923.xlsm")
+        if b:
+            st.download_button("⬇️ Official Amazon XLSM", b,
+                               "Amazon_SAREE_Official_Template_2026_0923.xlsm",
+                               "application/vnd.ms-excel.sheet.macroEnabled.12", key="tpl_amz_xlsm")
+        b = _template_bytes("Amazon_SAREE_upload_format.csv")
+        if b:
+            st.download_button("⬇️ Amazon Upload-Format CSV", b,
+                               "Amazon_SAREE_upload_format.csv", "text/csv", key="tpl_amz_csv")
+        st.caption("CSV uses the exact internal upload-field columns from your Amazon Saree template.")
+
+    with tc2:
+        st.markdown("**Meesho — Sarees**")
+        b = _template_bytes("Meesho_Sarees_Official_Template.xlsx")
+        if b:
+            st.download_button("⬇️ Official Meesho XLSX", b,
+                               "Meesho_Sarees_Official_Template.xlsx",
+                               "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="tpl_meesho_xlsx")
+        b = _template_bytes("Meesho_Sarees_upload_format.csv")
+        if b:
+            st.download_button("⬇️ Meesho Upload-Format CSV", b,
+                               "Meesho_Sarees_upload_format.csv", "text/csv", key="tpl_meesho_csv")
+        st.caption("CSV uses the exact 52 field columns from your 'Sarees-Fill this' sheet.")
+
+    with tc3:
+        st.markdown("**Flipkart — Saree**")
+        b = _template_bytes("Flipkart_Saree_Starter_Format.csv")
+        if b:
+            st.download_button("⬇️ Flipkart Starter CSV", b,
+                               "Flipkart_Saree_Starter_Format.csv", "text/csv", key="tpl_flip_csv")
+        st.warning("Not an official Flipkart upload template.")
+        st.caption("Flipkart generates the official template after you select the exact vertical/brand in Seller Hub.")
+
+    st.divider()
     f = st.file_uploader("Upload Bulk CSV", type=["csv"], key="bulk_csv")
     if f:
         df = pd.read_csv(f)
@@ -829,7 +883,7 @@ elif mode == "🧮 Price / Break-even Simulator":
 # ============================================================
 elif mode == "🧾 PDF Label Cropper":
     st.title("🧾 PDF Label Cropper & Sorter")
-    st.caption("Marketplace-specific label templates for the Flipkart E-Kart and Meesho/Valmo PDFs you provided. Invoice area is excluded.")
+    st.caption("Marketplace-specific shipping-label templates for Amazon, Flipkart/E-Kart and Meesho/Valmo. Invoice pages/areas are excluded where the marketplace format allows it.")
 
     if PdfReader is None:
         st.warning("Install pypdf from requirements.txt to enable PDF processing.")
@@ -838,13 +892,14 @@ elif mode == "🧾 PDF Label Cropper":
         if pdf:
             data = pdf.read()
             reader = PdfReader(io.BytesIO(data))
+            page_texts = [(p.extract_text() or "").lower() for p in reader.pages]
             st.success(f"{len(reader.pages)} page(s) loaded.")
 
             # These templates were measured from the user's supplied 595 x 842 point PDFs.
             # Coordinates are expressed as percentages of the page, with Y measured from
             # the bottom-left PDF origin.
             templates = {
-                # Calibrated from the two supplied 595 x 842 point PDFs.
+                # Calibrated from the supplied Flipkart and Meesho/Valmo samples.
                 # Y is measured from the PDF bottom-left origin.
                 "Meesho / Valmo — exact label": (0.0, 58.5, 100.0, 98.8),
                 "Flipkart / E-Kart — exact label": (31.0, 54.0, 69.0, 97.5),
@@ -855,7 +910,8 @@ elif mode == "🧾 PDF Label Cropper":
                 mode_crop = st.selectbox(
                     "Label template",
                     [
-                        "Auto Detect (Flipkart / Meesho)",
+                        "Auto Detect (Amazon / Flipkart / Meesho)",
+                        "Amazon — exact shipping label (keep label page)",
                         "Meesho / Valmo — exact label",
                         "Flipkart / E-Kart — exact label",
                         "Custom crop",
@@ -863,7 +919,7 @@ elif mode == "🧾 PDF Label Cropper":
                         "2-up split",
                         "4-up split",
                     ],
-                    help="Auto Detect reads the PDF text and selects the matching marketplace template page-by-page."
+                    help="Auto Detect reads the PDF text page-by-page. Amazon shipping-label pages are kept as-is because the supplied Amazon label already occupies the full page; invoice pages are skipped when detected."
                 )
             with c2:
                 order = st.selectbox("Page order", ["Original", "Reverse"])
@@ -906,8 +962,10 @@ elif mode == "🧾 PDF Label Cropper":
             else:
                 x1_pct = y1_pct = x2_pct = y2_pct = None
 
-            if mode_crop == "Auto Detect (Flipkart / Meesho)":
-                st.info("Auto Detect: Flipkart/E-Kart pages use the narrow centered label template; Meesho/Valmo pages use the wide upper-page template. Unknown pages are kept unchanged.")
+            if mode_crop == "Auto Detect (Amazon / Flipkart / Meesho)":
+                st.info("Auto Detect: Amazon shipping-label pages are kept as full label pages; Flipkart/E-Kart uses the centered template; Meesho/Valmo uses the wide upper-page template. Detected invoice-only pages are skipped.")
+            elif mode_crop == "Amazon — exact shipping label (keep label page)":
+                st.info("Amazon sample: the shipping label is the complete first page. The second page is the Tax Invoice, so this preset keeps only the Amazon label page.")
 
             if st.button("✂️ Create Label PDF", type="primary"):
                 writer = PdfWriter()
@@ -916,17 +974,50 @@ elif mode == "🧾 PDF Label Cropper":
                 for pi in pages:
                     page = reader.pages[pi]
                     detected = None
-                    if mode_crop == "Auto Detect (Flipkart / Meesho)":
+                    skip_page = False
+                    if mode_crop == "Auto Detect (Amazon / Flipkart / Meesho)":
                         txt = (page.extract_text() or "").lower()
-                        if "flipkart" in txt or "e-kart logistics" in txt or "ekart logistics" in txt:
+                        # Amazon shipping-label page: strong combination found in the supplied sample.
+                        amazon_label = (
+                            ("ship to:" in txt or "ship to" in txt)
+                            and ("awb" in txt or "box 1 of 1" in txt)
+                            and ("customer self declaration" in txt or "sold on: www.amazon.in" in txt)
+                        )
+                        amazon_invoice = "tax invoice/bill of supply/cash memo" in txt or ("tax invoice" in txt and "invoice value" in txt)
+                        # The supplied Amazon shipping-label page is image-based and has almost no
+                        # extractable text. If the following page is clearly the Amazon tax invoice,
+                        # treat the current image-only page as the shipping label.
+                        next_is_amazon_invoice = (
+                            pi + 1 < len(page_texts)
+                            and ("tax invoice/bill of supply/cash memo" in page_texts[pi + 1]
+                                 or ("tax invoice" in page_texts[pi + 1] and "invoice value" in page_texts[pi + 1]))
+                        )
+                        if amazon_label and not amazon_invoice:
+                            detected = "Amazon — exact shipping label (keep label page)"
+                        elif amazon_invoice and not amazon_label:
+                            detected = "SKIP — Amazon invoice"
+                        elif not txt.strip() and next_is_amazon_invoice:
+                            detected = "Amazon — exact shipping label (keep label page)"
+                        elif "flipkart" in txt or "e-kart logistics" in txt or "ekart logistics" in txt:
                             detected = "Flipkart / E-Kart — exact label"
                         elif "valmo" in txt or "meesho" in txt:
                             detected = "Meesho / Valmo — exact label"
 
                     effective = detected if detected else mode_crop
+                    # Amazon exact-label preset: keep shipping-label pages and skip detected tax-invoice pages.
+                    if mode_crop == "Amazon — exact shipping label (keep label page)" and not detected:
+                        txt_for_preset = (page.extract_text() or "").lower()
+                        if "tax invoice/bill of supply/cash memo" in txt_for_preset or ("tax invoice" in txt_for_preset and "invoice value" in txt_for_preset):
+                            effective = "SKIP — Amazon invoice"
+                        else:
+                            effective = "Amazon — exact shipping label (keep label page)"
                     detections.append((pi + 1, effective))
 
-                    if effective == "Keep pages" or (mode_crop == "Auto Detect (Flipkart / Meesho)" and not detected):
+                    if effective.startswith("SKIP"):
+                        skip_page = True
+                    if skip_page:
+                        continue
+                    if effective == "Keep pages" or (mode_crop == "Auto Detect (Amazon / Flipkart / Meesho)" and not detected):
                         writer.add_page(page)
                         continue
 
@@ -955,7 +1046,12 @@ elif mode == "🧾 PDF Label Cropper":
                         clone.mediabox = box
                         writer.add_page(clone)
 
-                    if effective in templates:
+                    if effective == "Amazon — exact shipping label (keep label page)":
+                        # The supplied Amazon shipping label is already a full-page label.
+                        # Do not crop it: trimming would remove the AWB, QR codes, route boxes,
+                        # declaration and barcode. Simply copy the label page.
+                        writer.add_page(copy.deepcopy(page))
+                    elif effective in templates:
                         a, b, c, d = templates[effective]
                         add_crop(w*a/100.0, h*b/100.0, w*c/100.0, h*d/100.0)
                     elif effective == "Custom crop":
