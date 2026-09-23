@@ -1,5 +1,6 @@
 
 import io
+import copy
 import json
 import math
 import re
@@ -17,8 +18,9 @@ except Exception:
 
 try:
     from pypdf import PdfReader, PdfWriter
+    from pypdf.generic import RectangleObject
 except Exception:
-    PdfReader = PdfWriter = None
+    PdfReader = PdfWriter = RectangleObject = None
 
 st.set_page_config(
     page_title="Pure Vastra Seller Intelligence Suite V4",
@@ -352,38 +354,93 @@ def variant_quality(variants, marketplace):
 # BUSINESS REPORT HEALTH ENGINE
 # ============================================================
 def business_health(df):
-    rename = {}
-    for c in df.columns:
-        lc = c.lower().strip()
-        if "asin" in lc:
-            rename[c] = "ASIN"
-        elif "sku" == lc or lc.endswith("sku"):
-            rename[c] = "SKU"
-        elif "sessions" in lc:
-            rename[c] = "Sessions"
-        elif "units ordered" in lc:
-            rename[c] = "Orders"
-        elif "unit session" in lc:
-            rename[c] = "Conversion"
-        elif "ordered product sales" in lc or lc == "sales":
-            rename[c] = "Sales"
-        elif "title" in lc:
-            rename[c] = "Title"
-    x = df.rename(columns=rename).copy()
-    for c in ["Sessions","Orders","Sales"]:
-        if c in x:
-            x[c] = pd.to_numeric(x[c], errors="coerce").fillna(0)
-    if "Conversion" not in x and {"Sessions","Orders"} <= set(x.columns):
-        x["Conversion"] = (x["Orders"] / x["Sessions"].replace(0, pd.NA) * 100).fillna(0)
-    if "Orders" in x and "Sessions" in x:
-        x["Diagnosis"] = x.apply(
-            lambda r: "NO/LOW TRAFFIC DATA" if r["Sessions"] < 20 and r["Orders"] == 0
-            else ("TRAFFIC OK → CHECK CONVERSION" if r["Sessions"] >= 50 and r["Orders"] == 0
-                  else ("CONVERSION REVIEW" if r["Orders"] > 0 and r["Conversion"] < 1.0
-                        else "NORMAL / MONITOR")),
-            axis=1,
+    """Normalize Amazon Business Report exports without creating duplicate columns.
+
+    Amazon exports can contain slightly different headers, and renaming several
+    source columns to the same canonical name creates duplicate pandas columns.
+    This function instead selects one source column per metric and builds a clean
+    output dataframe.
+    """
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    src = df.copy()
+    columns = list(src.columns)
+
+    def find_col(kind):
+        for c in columns:
+            lc = s(c).lower().strip()
+            if kind == "asin" and (lc == "asin" or "asin" in lc):
+                return c
+            if kind == "sku" and (lc == "sku" or lc.endswith("sku")):
+                return c
+            if kind == "title" and "title" in lc:
+                return c
+            if kind == "sessions" and "session" in lc and "percentage" not in lc and "unit session" not in lc:
+                return c
+            if kind == "orders" and ("units ordered" in lc or lc == "units ordered"):
+                return c
+            if kind == "conversion" and ("unit session percentage" in lc or "unit session %" in lc):
+                return c
+            if kind == "sales" and ("ordered product sales" in lc or lc == "sales" or "product sales" in lc):
+                return c
+        return None
+
+    out = pd.DataFrame(index=src.index)
+    mapping = {
+        "ASIN": find_col("asin"),
+        "SKU": find_col("sku"),
+        "Title": find_col("title"),
+        "Sessions": find_col("sessions"),
+        "Orders": find_col("orders"),
+        "Conversion": find_col("conversion"),
+        "Sales": find_col("sales"),
+    }
+
+    for target, source in mapping.items():
+        if source is not None:
+            # Always extract a Series by position/name from the original frame.
+            value = src.loc[:, source]
+            if isinstance(value, pd.DataFrame):
+                value = value.iloc[:, 0]
+            out[target] = value
+
+    for c in ["Sessions", "Orders", "Sales"]:
+        if c in out.columns:
+            out[c] = pd.to_numeric(
+                out[c].astype(str).str.replace(",", "", regex=False).str.replace("₹", "", regex=False).str.strip(),
+                errors="coerce",
+            ).fillna(0.0)
+
+    if "Orders" not in out.columns:
+        out["Orders"] = 0.0
+    if "Sessions" not in out.columns:
+        out["Sessions"] = 0.0
+    if "Sales" not in out.columns:
+        out["Sales"] = 0.0
+
+    if "Conversion" in out.columns:
+        out["Conversion"] = pd.to_numeric(
+            out["Conversion"].astype(str).str.replace("%", "", regex=False).str.replace(",", "", regex=False).str.strip(),
+            errors="coerce",
         )
-    return x
+    else:
+        out["Conversion"] = pd.NA
+
+    # Amazon may export conversion as a percentage. Fill missing values from orders/sessions.
+    calculated = (out["Orders"] / out["Sessions"].replace(0, pd.NA) * 100)
+    out["Conversion"] = out["Conversion"].fillna(calculated).fillna(0.0)
+
+    out["Diagnosis"] = out.apply(
+        lambda r: "NO/LOW TRAFFIC DATA" if r["Sessions"] < 20 and r["Orders"] == 0
+        else ("TRAFFIC OK → CHECK CONVERSION" if r["Sessions"] >= 50 and r["Orders"] == 0
+              else ("CONVERSION REVIEW" if r["Orders"] > 0 and r["Conversion"] < 1.0
+                    else "NORMAL / MONITOR")),
+        axis=1,
+    )
+
+    preferred = ["ASIN", "SKU", "Title", "Sessions", "Orders", "Conversion", "Sales", "Diagnosis"]
+    return out[[c for c in preferred if c in out.columns]]
 
 # ============================================================
 # UI
@@ -812,23 +869,22 @@ elif mode == "🧾 PDF Label Cropper":
                         h = float(mb.height)
                         if mode_crop == "2-up split":
                             for side in range(2):
-                                new = reader.pages[pi]
-                                clone = new
-                                # CropBox clipping; original page object is not mutated permanently.
-                                clone = type(page)(page)
+                                clone = copy.deepcopy(page)
                                 if side == 0:
-                                    clone.cropbox.lower_left = (0, 0)
-                                    clone.cropbox.upper_right = (w/2, h)
+                                    box = RectangleObject([0, 0, w/2, h])
                                 else:
-                                    clone.cropbox.lower_left = (w/2, 0)
-                                    clone.cropbox.upper_right = (w, h)
+                                    box = RectangleObject([w/2, 0, w, h])
+                                clone.cropbox = box
                                 writer.add_page(clone)
                         else:
                             for row in range(2):
                                 for col in range(2):
-                                    clone = type(page)(page)
-                                    clone.cropbox.lower_left = (col*w/2, row*h/2)
-                                    clone.cropbox.upper_right = ((col+1)*w/2, (row+1)*h/2)
+                                    clone = copy.deepcopy(page)
+                                    box = RectangleObject([
+                                        col*w/2, row*h/2,
+                                        (col+1)*w/2, (row+1)*h/2
+                                    ])
+                                    clone.cropbox = box
                                     writer.add_page(clone)
 
                 out = io.BytesIO()
@@ -843,30 +899,89 @@ elif mode == "🧾 PDF Label Cropper":
 # ============================================================
 elif mode == "👗 AI Virtual Model Studio":
     st.title("👗 AI Virtual Model Studio")
-    st.info("Garment-reference analysis is supported. Actual image rendering depends on the configured image-generation service.")
-    files = st.file_uploader("Upload garment reference images", type=["jpg","jpeg","png"], accept_multiple_files=True, key="vton")
-    if files:
+    st.caption("Upload garment photos → preview → analyze/lock product facts. This V4 module analyzes references; it does not silently generate a new model image.")
+
+    files = st.file_uploader(
+        "Upload garment reference images",
+        type=["jpg", "jpeg", "png", "webp"],
+        accept_multiple_files=True,
+        key="vton",
+        help="Use clear front/back/detail photos. Up to 3 images are analyzed."
+    )
+
+    if not files:
+        st.info("👆 Pehle kam se kam 1 garment image upload kijiye.")
+    else:
         imgs = image_list(files[:3])
-        cols = st.columns(len(imgs))
-        for i, im in enumerate(imgs):
-            with cols[i]:
-                st.image(im, caption=f"Reference {i+1}", use_container_width=True)
-        if st.button("🔒 Analyze & Lock Garment Facts"):
-            try:
-                resp = ai_generate([
-                    """Analyze the uploaded garment references for e-commerce use.
-Return JSON with only visually supportable observations: apparent colour, pattern, fabric if visually stated by seller, border/work details, pallu details, included components only if explicitly provided, and verification_required.
-Do not claim exact fabric composition from appearance alone.""",
-                    *imgs
-                ])
-                data = safe_json(resp.text)
-                if data:
-                    st.json(data)
-                    st.session_state["locked_garment_profile"] = data
+        if not imgs:
+            st.error("Uploaded image read nahi ho payi. JPG/PNG/WEBP file try karein.")
+        else:
+            cols = st.columns(len(imgs))
+            for i, im in enumerate(imgs):
+                with cols[i]:
+                    st.image(im, caption=f"Reference {i+1}", use_container_width=True)
+
+            st.write(f"**{len(imgs)} image(s) ready.**")
+            c1, c2 = st.columns(2)
+            with c1:
+                analyze_clicked = st.button("🔍 Analyze Garment", type="primary", use_container_width=True)
+            with c2:
+                clear_clicked = st.button("🗑️ Clear Analysis", use_container_width=True)
+
+            if clear_clicked:
+                st.session_state.pop("locked_garment_profile", None)
+                st.session_state.pop("garment_analysis_result", None)
+                st.rerun()
+
+            if analyze_clicked:
+                # Always give visible feedback. AI is optional; without a key we still
+                # expose image metadata instead of appearing to do nothing.
+                key = api_key()
+                if key and genai is not None:
+                    try:
+                        with st.spinner("Gemini garment analysis chal raha hai..."):
+                            resp = ai_generate([
+                                """Analyze these uploaded garment references for e-commerce use.
+Return JSON only with: apparent_colour, apparent_pattern, visible_work, visible_border,
+visible_pallu_details, visible_blouse_piece, visual_notes, verification_required.
+Only report visually supportable observations. Do not claim exact fabric composition,
+measurements, GSM, certification, quality grade, or other non-visible specifications.
+If something is uncertain, put it in verification_required.""",
+                                *imgs
+                            ])
+                        data = safe_json(getattr(resp, "text", ""))
+                        if data is None:
+                            data = {"raw_ai_response": getattr(resp, "text", ""), "verification_required": ["Review AI response before publishing."]}
+                        st.session_state["garment_analysis_result"] = data
+                        st.session_state["locked_garment_profile"] = data
+                        st.success("✅ Garment analysis complete. Review the facts before using them in a listing.")
+                    except Exception as e:
+                        st.error(f"Gemini analysis failed: {e}")
+                        st.info("API key/quota/network issue ho sakta hai. Neeche image metadata fallback available hai.")
+                        data = {
+                            "images_analyzed": len(imgs),
+                            "image_dimensions": [f"{im.width} × {im.height}px" for im in imgs],
+                            "verification_required": ["AI analysis unavailable; manually verify colour, fabric, pattern, work, pallu and included components."],
+                        }
+                        st.session_state["garment_analysis_result"] = data
                 else:
-                    st.write(resp.text)
-            except Exception as e:
-                st.error(str(e))
+                    data = {
+                        "images_analyzed": len(imgs),
+                        "image_dimensions": [f"{im.width} × {im.height}px" for im in imgs],
+                        "ai_status": "Gemini API key not configured",
+                        "verification_required": [
+                            "Add Gemini API Key in the left sidebar for AI analysis.",
+                            "Do not treat image appearance as proof of exact fabric composition or measurements.",
+                        ],
+                    }
+                    st.session_state["garment_analysis_result"] = data
+                    st.warning("Gemini API key configured nahi hai. Image upload/action working hai, lekin AI analysis ke liye sidebar me API key deni hogi.")
+
+            result = st.session_state.get("garment_analysis_result")
+            if result:
+                st.subheader("Analysis / Verification")
+                st.json(result)
+                st.caption("🔒 Lock karne se pehle AI-suggested facts ko manually verify karein. Exact fabric/composition/measurements ko image se infer na karein.")
 
 # ============================================================
 # METHODOLOGY
