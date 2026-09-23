@@ -829,77 +829,104 @@ elif mode == "🧮 Price / Break-even Simulator":
 # ============================================================
 elif mode == "🧾 PDF Label Cropper":
     st.title("🧾 PDF Label Cropper & Sorter")
-    st.caption("Local PDF processing. No AI is required for basic page splitting/reordering.")
+    st.caption("Marketplace-specific label templates for the Flipkart E-Kart and Meesho/Valmo PDFs you provided. Invoice area is excluded.")
 
     if PdfReader is None:
         st.warning("Install pypdf from requirements.txt to enable PDF processing.")
     else:
-        pdf = st.file_uploader("Upload PDF", type=["pdf"], key="label_pdf")
+        pdf = st.file_uploader("Upload Flipkart / Meesho PDF", type=["pdf"], key="label_pdf")
         if pdf:
             data = pdf.read()
             reader = PdfReader(io.BytesIO(data))
-            st.success(f"{len(reader.pages)} pages loaded.")
+            st.success(f"{len(reader.pages)} page(s) loaded.")
 
-            c1,c2,c3 = st.columns(3)
+            # These templates were measured from the user's supplied 595 x 842 point PDFs.
+            # Coordinates are expressed as percentages of the page, with Y measured from
+            # the bottom-left PDF origin.
+            templates = {
+                # Calibrated from the two supplied 595 x 842 point PDFs.
+                # Y is measured from the PDF bottom-left origin.
+                "Meesho / Valmo — exact label": (0.0, 58.5, 100.0, 98.8),
+                "Flipkart / E-Kart — exact label": (31.0, 54.0, 69.0, 97.5),
+            }
+
+            c1, c2, c3 = st.columns(3)
             with c1:
                 mode_crop = st.selectbox(
-                    "Crop / page mode",
+                    "Label template",
                     [
+                        "Auto Detect (Flipkart / Meesho)",
+                        "Meesho / Valmo — exact label",
+                        "Flipkart / E-Kart — exact label",
+                        "Custom crop",
                         "Keep pages",
-                        "Top-right shipping label",
-                        "Top-left crop",
-                        "Bottom-right crop",
-                        "Bottom-left crop",
-                        "Right half",
-                        "Left half",
                         "2-up split",
                         "4-up split",
-                        "Custom crop",
-                    ]
+                    ],
+                    help="Auto Detect reads the PDF text and selects the matching marketplace template page-by-page."
                 )
             with c2:
-                order = st.selectbox("Order", ["Original", "Reverse"])
+                order = st.selectbox("Page order", ["Original", "Reverse"])
             with c3:
-                start = st.number_input("Start page", 1, len(reader.pages), 1)
+                margin = st.number_input(
+                    "Safety margin %",
+                    min_value=0.0, max_value=5.0, value=0.0, step=0.1,
+                    help="Adds a small border around the marketplace label. Use 0.0 for the tightest crop."
+                )
 
-            end = st.number_input("End page", int(start), len(reader.pages), len(reader.pages))
+            c4, c5 = st.columns(2)
+            with c4:
+                start = st.number_input("Start page", 1, len(reader.pages), 1)
+            with c5:
+                end = st.number_input("End page", int(start), len(reader.pages), len(reader.pages))
             pages = list(range(int(start)-1, int(end)))
             if order == "Reverse":
                 pages.reverse()
 
-            st.write("Selected pages:", [x+1 for x in pages])
+            st.write("Selected pages:", [x + 1 for x in pages])
 
-            # These presets are designed for common marketplace shipping-label PDFs
-            # where the label occupies the upper-right area and the invoice/packing
-            # slip is below it. Coordinates are percentages of the page.
-            if mode_crop == "Top-right shipping label":
-                st.info("Shipping-label preset: upper-right area only. This avoids exporting the invoice area below the label.")
-                x1_pct, y1_pct, x2_pct, y2_pct = 50, 42, 100, 100
-            elif mode_crop == "Top-left crop":
-                x1_pct, y1_pct, x2_pct, y2_pct = 0, 42, 50, 100
-            elif mode_crop == "Bottom-right crop":
-                x1_pct, y1_pct, x2_pct, y2_pct = 50, 0, 100, 58
-            elif mode_crop == "Bottom-left crop":
-                x1_pct, y1_pct, x2_pct, y2_pct = 0, 0, 50, 58
-            elif mode_crop == "Right half":
-                x1_pct, y1_pct, x2_pct, y2_pct = 50, 0, 100, 100
-            elif mode_crop == "Left half":
-                x1_pct, y1_pct, x2_pct, y2_pct = 0, 0, 50, 100
-            elif mode_crop == "Custom crop":
-                st.caption("Percentages use the PDF page: X/Y start at the bottom-left. For the top-right label, try X=50, Y=42, Width=50, Height=58.")
-                cc1,cc2,cc3,cc4 = st.columns(4)
-                with cc1: x1_pct = st.number_input("Left X %", 0.0, 100.0, 50.0, 1.0)
-                with cc2: y1_pct = st.number_input("Bottom Y %", 0.0, 100.0, 42.0, 1.0)
-                with cc3: x2_pct = st.number_input("Right X %", 0.0, 100.0, 100.0, 1.0)
-                with cc4: y2_pct = st.number_input("Top Y %", 0.0, 100.0, 100.0, 1.0)
+            if mode_crop == "Custom crop":
+                st.info("Coordinates are percentages. X is left→right. Y is bottom→top, matching PDF coordinates.")
+                cc1, cc2, cc3, cc4 = st.columns(4)
+                with cc1:
+                    x1_pct = st.number_input("Left X %", 0.0, 100.0, 30.0, 0.5)
+                with cc2:
+                    y1_pct = st.number_input("Bottom Y %", 0.0, 100.0, 53.0, 0.5)
+                with cc3:
+                    x2_pct = st.number_input("Right X %", 0.0, 100.0, 70.0, 0.5)
+                with cc4:
+                    y2_pct = st.number_input("Top Y %", 0.0, 100.0, 98.5, 0.5)
+            elif mode_crop in templates:
+                x1_pct, y1_pct, x2_pct, y2_pct = templates[mode_crop]
+                st.info(
+                    f"Preset: X {x1_pct:.1f}–{x2_pct:.1f}% | "
+                    f"Y {y1_pct:.1f}–{y2_pct:.1f}%. "
+                    f"This is calibrated to the supplied {mode_crop.split('—')[0].strip()} sample."
+                )
             else:
                 x1_pct = y1_pct = x2_pct = y2_pct = None
 
-            if st.button("✂️ Create Output PDF", type="primary"):
+            if mode_crop == "Auto Detect (Flipkart / Meesho)":
+                st.info("Auto Detect: Flipkart/E-Kart pages use the narrow centered label template; Meesho/Valmo pages use the wide upper-page template. Unknown pages are kept unchanged.")
+
+            if st.button("✂️ Create Label PDF", type="primary"):
                 writer = PdfWriter()
+                detections = []
+
                 for pi in pages:
                     page = reader.pages[pi]
-                    if mode_crop == "Keep pages":
+                    detected = None
+                    if mode_crop == "Auto Detect (Flipkart / Meesho)":
+                        txt = (page.extract_text() or "").lower()
+                        if "flipkart" in txt or "e-kart logistics" in txt or "ekart logistics" in txt:
+                            detected = "Flipkart / E-Kart — exact label"
+                        elif "valmo" in txt or "meesho" in txt:
+                            detected = "Meesho / Valmo — exact label"
+
+                    effective = detected if detected else mode_crop
+                    detections.append((pi + 1, effective))
+
+                    if effective == "Keep pages" or (mode_crop == "Auto Detect (Flipkart / Meesho)" and not detected):
                         writer.add_page(page)
                         continue
 
@@ -908,48 +935,54 @@ elif mode == "🧾 PDF Label Cropper":
                     h = float(mb.height)
 
                     def add_crop(x1, y1, x2, y2):
-                        # Normalize/clamp the crop rectangle and create a fresh page copy.
                         x1 = max(0.0, min(w, float(x1)))
                         x2 = max(0.0, min(w, float(x2)))
                         y1 = max(0.0, min(h, float(y1)))
                         y2 = max(0.0, min(h, float(y2)))
                         if x2 <= x1 or y2 <= y1:
-                            raise ValueError("Invalid crop rectangle. Check crop percentages.")
+                            raise ValueError("Invalid crop rectangle. Check crop settings.")
+
                         clone = copy.deepcopy(page)
-                        clone.cropbox = RectangleObject([x1, y1, x2, y2])
-                        # Keep the media box consistent with the visible crop.
-                        clone.mediabox = RectangleObject([x1, y1, x2, y2])
+                        # Add a small safety margin while staying inside the page.
+                        mx = (x2 - x1) * float(margin) / 100.0
+                        my = (y2 - y1) * float(margin) / 100.0
+                        x1 = max(0.0, x1 - mx)
+                        y1 = max(0.0, y1 - my)
+                        x2 = min(w, x2 + mx)
+                        y2 = min(h, y2 + my)
+                        box = RectangleObject([x1, y1, x2, y2])
+                        clone.cropbox = box
+                        clone.mediabox = box
                         writer.add_page(clone)
 
-                    if mode_crop in {
-                        "Top-right shipping label", "Top-left crop",
-                        "Bottom-right crop", "Bottom-left crop",
-                        "Right half", "Left half", "Custom crop"
-                    }:
-                        add_crop(
-                            w * x1_pct / 100.0,
-                            h * y1_pct / 100.0,
-                            w * x2_pct / 100.0,
-                            h * y2_pct / 100.0,
-                        )
-                    elif mode_crop == "2-up split":
-                        for side in range(2):
-                            if side == 0:
-                                add_crop(0, 0, w/2, h)
-                            else:
-                                add_crop(w/2, 0, w, h)
-                    elif mode_crop == "4-up split":
+                    if effective in templates:
+                        a, b, c, d = templates[effective]
+                        add_crop(w*a/100.0, h*b/100.0, w*c/100.0, h*d/100.0)
+                    elif effective == "Custom crop":
+                        add_crop(w*x1_pct/100.0, h*y1_pct/100.0, w*x2_pct/100.0, h*y2_pct/100.0)
+                    elif effective == "2-up split":
+                        add_crop(0, 0, w/2, h)
+                        add_crop(w/2, 0, w, h)
+                    elif effective == "4-up split":
                         for row in range(2):
                             for col in range(2):
                                 add_crop(col*w/2, row*h/2, (col+1)*w/2, (row+1)*h/2)
+                    else:
+                        writer.add_page(page)
 
                 out = io.BytesIO()
                 writer.write(out)
                 out.seek(0)
-                st.success(f"Output PDF ready — {len(writer.pages)} page(s).")
+
+                if detections:
+                    st.write("Detected/selected template:", detections)
+
+                st.success(f"Label PDF ready — {len(writer.pages)} page(s).")
                 st.download_button(
-                    "📥 Download Cropped PDF", out.getvalue(),
-                    "pure_vastra_labels_cropped.pdf", "application/pdf"
+                    "📥 Download Label PDF",
+                    out.getvalue(),
+                    "pure_vastra_shipping_labels.pdf",
+                    "application/pdf"
                 )
 
 # ============================================================
