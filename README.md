@@ -1,16 +1,21 @@
-# Pure Vastra Seller Intelligence Suite V4
+# Pure Vastra Seller Intelligence Suite V4.1
 
 ## Modules
-- New Single Listing Builder
-- Multi-Listing / Content Variant Generator
-- Bulk Listing Builder & Bulk Audit
-- Deep Listing Auditor
-- Listing Health Center (Business Report CSV)
-- Profit & Margin Calculator
-- Price / Break-even Simulator
-- PDF Label Cropper & Sorter
-- AI Virtual Model Studio
-- Methodology & Templates
+1. 🆕 New Single Listing
+2. 🔁 Multi-Listing Generator
+3. 📦 Bulk Listing Builder
+4. 🔍 Listing Auditor
+5. 📊 Listing Health Center
+6. 💰 Profit & Margin Calculator
+7. 🧮 Price / Break-even Simulator
+8. 🧾 PDF Label Cropper
+9. 👗 AI Virtual Model Studio
+10. ⚙️ Methodology & Templates
+
+## V4.1 stability fixes
+- PDF Label Cropper: fixed pypdf CropBox handling using safe page copies and RectangleObject; 2-up and 4-up splitting tested.
+- Listing Health Center: robust Amazon Business Report column normalization; avoids duplicate-column pandas errors and correctly reads Unit Session Percentage, Sessions, Units Ordered and Ordered Product Sales.
+- AI Virtual Model Studio: upload/preview/action now always gives visible feedback. Gemini analysis works when an API key is configured; without a key the app shows a clear fallback instead of a silent no-op. AI observations remain verification-required and do not prove exact fabric composition or measurements.
 
 ## Run
 ```bash
@@ -18,11 +23,6 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-## Multi-listing behavior
-The Multi-Listing Generator creates multiple content drafts for the SAME physical product. It locks seller-provided verified facts and varies wording/angle. It does NOT certify that separate duplicate catalogs are allowed by a marketplace.
+Gemini is optional. Configure the API key in the sidebar or as `GEMINI_API_KEY` in Streamlit secrets for AI analysis.
 
-## Amazon note
-The app is configured for Amazon India's current 75-character Item Name / 125-character Item Highlights guidance for most non-media categories, based on Amazon Seller Central's July 2026 announcement. Always verify the current category-specific Seller Central template before upload.
-
-## Important
-Marketplace fees are editable assumptions and must be verified against the seller's current fee schedule.
+Marketplace fees are editable assumptions and must be verified against the current marketplace fee schedule before pricing decisions.
