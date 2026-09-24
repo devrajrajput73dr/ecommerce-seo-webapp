@@ -129,77 +129,283 @@ FIELD_ALIASES = {
 def _norm_field(v):
     return re.sub(r"[^a-z0-9]+", " ", s(v).lower()).strip()
 
+def _clean_template_field_name(value):
+    """Extract a stable field name from marketplace template cells.
+
+    Meesho templates store `Field Name + Description` in one cell.  Amazon
+    templates may store human labels and internal upload names on separate rows.
+    We must never use the long instructional description as the column name.
+    """
+    raw = s(value).replace("\r\n", "\n").replace("\r", "\n")
+    if not raw:
+        return ""
+    lines = [x.strip() for x in raw.split("\n") if x.strip()]
+    skip_exact = {
+        "fields + description:", "field names", "tutorial link",
+        "optional field", "* compulsory field",
+        "do not fill these 2 columns. to be filled by meesho only.",
+    }
+    for line in lines:
+        low = line.lower().strip()
+        if low in skip_exact:
+            continue
+        if low.startswith("do not fill these") or low.startswith("for system use"):
+            continue
+        # Description cells contain the field name as their first meaningful line.
+        return line
+    return ""
+
+
+def _dedupe_columns(header):
+    cols, seen = [], {}
+    for i, value in enumerate(header):
+        base = _clean_template_field_name(value) or f"Column_{i+1}"
+        n = seen.get(base, 0)
+        seen[base] = n + 1
+        cols.append(base if n == 0 else f"{base}_{n+1}")
+    return cols
+
+
 def _read_template_bytes(uploaded):
+    """Read an uploaded marketplace template without confusing descriptions for fields."""
     name = s(getattr(uploaded, "name", "")).lower()
     raw = uploaded.getvalue()
+
     if name.endswith(".csv"):
         try:
             df = pd.read_csv(io.BytesIO(raw), header=None, dtype=str, keep_default_na=False)
         except Exception:
             df = pd.read_csv(io.BytesIO(raw), header=None, dtype=str, keep_default_na=False, encoding="latin1")
-        return df, {"kind":"csv", "name":name}
+        if df.empty:
+            raise ValueError("Uploaded CSV is empty.")
+        # CSV templates normally use the first non-empty row as the field row.
+        header_idx = 0
+        for i in range(min(len(df), 10)):
+            if sum(bool(s(x)) for x in df.iloc[i].tolist()) >= 2:
+                header_idx = i
+                break
+        header = df.iloc[header_idx].tolist()
+        cols = _dedupe_columns(header)
+        return pd.DataFrame(columns=cols), {
+            "kind": "csv", "name": name, "sheet": None,
+            "header_row": header_idx + 1, "data_row": header_idx + 2,
+            "raw_header": header, "columns": cols,
+        }
+
     if load_workbook is None:
         raise RuntimeError("openpyxl is required for XLSX/XLSM templates.")
-    wb = load_workbook(io.BytesIO(raw), read_only=True, data_only=False, keep_vba=name.endswith(".xlsm"))
-    best = None
+
+    wb = load_workbook(
+        io.BytesIO(raw), read_only=True, data_only=False,
+        keep_vba=name.endswith(".xlsm")
+    )
+
+    # ---- Known official template structures ----
     for ws in wb.worksheets:
-        rows=[]
+        rows = []
         for row in ws.iter_rows(values_only=True):
             rows.append([s(x) for x in row])
             if len(rows) >= 30:
                 break
-        for idx,row in enumerate(rows):
-            nonempty=sum(bool(x) for x in row)
+
+        # Meesho: row 2 has requirement markers, row 3 contains
+        # "Field + Description" in each cell, and row 5 is the first data row.
+        if any("field names" in s(x).lower() for x in (rows[1] if len(rows) > 1 else [])):
+            field_idx = 2  # Excel row 3
+            header = rows[field_idx]
+            cols = _dedupe_columns(header)
+            return pd.DataFrame(columns=cols), {
+                "kind": "excel", "name": name, "sheet": ws.title,
+                "header_row": field_idx + 1, "data_row": 5,
+                "raw_header": header, "columns": cols,
+                "template_family": "meesho",
+                "requirement_row": 2,
+            }
+
+        # Amazon unified template: row 4 is human labels, row 5 is the
+        # internal upload-field names, row 8 is the seller data row.
+        if ws.title.strip().lower() == "template" and len(rows) >= 5:
+            row4 = rows[3]
+            row5 = rows[4]
+            row4_join = " | ".join(row4[:20]).lower()
+            row5_join = " | ".join(row5[:20]).lower()
+            if ("sku" in row4_join and "item name" in row4_join) or "contribution_sku" in row5_join:
+                header = row5
+                cols = _dedupe_columns(header)
+                return pd.DataFrame(columns=cols), {
+                    "kind": "excel", "name": name, "sheet": ws.title,
+                    "header_row": 5, "data_row": 8,
+                    "raw_header": header, "columns": cols,
+                    "template_family": "amazon",
+                    "display_header_row": 4,
+                }
+
+    # ---- Generic Excel fallback ----
+    best = None
+    for ws in wb.worksheets:
+        rows = []
+        for row in ws.iter_rows(values_only=True):
+            rows.append([s(x) for x in row])
+            if len(rows) >= 30:
+                break
+
+        for idx, row in enumerate(rows):
+            nonempty = sum(bool(x) for x in row)
             if nonempty < 3:
                 continue
-            # Prefer rows containing field-like names over instruction text.
-            score=nonempty
-            joined=" | ".join(row[:min(len(row),80)]).lower()
-            if any(k in joined for k in ["product name","item name","sku","brand","price","field names"]):
+            cleaned = [_clean_template_field_name(x) for x in row]
+            useful = sum(bool(x) for x in cleaned)
+            joined = " | ".join(cleaned[:80]).lower()
+            score = useful
+            if any(k in joined for k in ["product name", "item name", "sku", "brand", "price"]):
                 score += 20
-            if best is None or score>best[0]:
-                best=(score, ws.title, idx, row, rows)
+            # Strongly penalize rows that are clearly prose/instructions.
+            prose = sum(len(s(x)) > 120 for x in row)
+            score -= prose * 2
+            if best is None or score > best[0]:
+                best = (score, ws.title, idx, row, rows)
+
     if best is None:
-        raise ValueError("Could not detect a usable header row in the uploaded template.")
-    _,sheet,hdr_idx,header,rows=best
-    # For templates with a Field Names row followed by descriptions, keep the field-name row.
-    if "field names" in " | ".join(header).lower():
-        pass
-    cols=[]; seen={}
-    for x in header:
-        base=s(x) or f"Column_{len(cols)+1}"
-        n=seen.get(base,0); seen[base]=n+1
-        cols.append(base if n==0 else f"{base}_{n+1}")
-    return pd.DataFrame(columns=cols), {"kind":"excel", "name":name, "sheet":sheet, "header_row":hdr_idx+1}
+        raise ValueError("Could not detect a usable field row in the uploaded template.")
+
+    _, sheet, hdr_idx, header, rows = best
+    cols = _dedupe_columns(header)
+    return pd.DataFrame(columns=cols), {
+        "kind": "excel", "name": name, "sheet": sheet,
+        "header_row": hdr_idx + 1, "data_row": hdr_idx + 2,
+        "raw_header": header, "columns": cols,
+        "template_family": "generic",
+    }
+
 
 def _template_required_flags(uploaded):
-    """Return required flags when the uploaded template exposes them; otherwise blank/unknown."""
-    name=s(getattr(uploaded,"name",""))
-    raw=uploaded.getvalue()
-    if name.lower().endswith('.csv'):
+    """Return required flags keyed by the same cleaned field names used by the parser."""
+    name = s(getattr(uploaded, "name", ""))
+    raw = uploaded.getvalue()
+    if name.lower().endswith(".csv") or load_workbook is None:
         return {}
-    if load_workbook is None: return {}
+
     try:
-        wb=load_workbook(io.BytesIO(raw), read_only=True, data_only=False, keep_vba=name.lower().endswith('.xlsm'))
-        flags={}
+        wb = load_workbook(
+            io.BytesIO(raw), read_only=True, data_only=False,
+            keep_vba=name.lower().endswith(".xlsm")
+        )
+
+        # Meesho's current workbook structure:
+        # row 2 = requirement markers, row 3 = field names + descriptions.
+        # Only inspect the actual "Fill this" sheet so an Instructions sheet
+        # cannot accidentally become the source of the required-field map.
         for ws in wb.worksheets:
-            rows=[]
+            title = ws.title.strip().lower()
+            if "fill this" not in title:
+                continue
+            rows = []
             for row in ws.iter_rows(values_only=True):
                 rows.append([s(x) for x in row])
-                if len(rows)>=10: break
-            for row in rows:
-                if len(row)>3 and sum(bool(x) for x in row)>=5:
-                    if any("compulsory field" in x.lower() for x in row):
-                        # map the marker row to the next likely field-name row
-                        ridx=rows.index(row)
-                        if ridx+1 < len(rows):
-                            fieldrow=rows[ridx+1]
-                            for i,(f,m) in enumerate(zip(fieldrow,row)):
-                                if f and "compulsory field" in m.lower(): flags[f]=True
+                if len(rows) >= 6:
+                    break
+            if len(rows) >= 3:
+                marker_row = rows[1]
+                field_row = rows[2]
+                if any("compulsory field" in x.lower() for x in marker_row):
+                    flags = {}
+                    for i, marker in enumerate(marker_row):
+                        if i >= len(field_row):
+                            break
+                        field = _clean_template_field_name(field_row[i])
+                        if field:
+                            flags[field] = "compulsory field" in s(marker).lower()
+                    if flags:
+                        return flags
+
+        # Generic fallback for other Excel templates exposing a marker row.
+        for ws in wb.worksheets:
+            rows = []
+            for row in ws.iter_rows(values_only=True):
+                rows.append([s(x) for x in row])
+                if len(rows) >= 12:
+                    break
+
+            for ridx, row in enumerate(rows):
+                if not any("compulsory field" in x.lower() for x in row):
+                    continue
+                if ridx + 1 >= len(rows):
+                    continue
+                fieldrow = rows[ridx + 1]
+                flags = {}
+                for i, marker in enumerate(row):
+                    if i >= len(fieldrow):
                         break
-        return flags
+                    field = _clean_template_field_name(fieldrow[i])
+                    if field:
+                        flags[field] = "compulsory field" in s(marker).lower()
+                if flags:
+                    return flags
+
+        return {}
     except Exception:
         return {}
+
+
+def _build_prefilled_template_bytes(uploaded, dyn_df, tmeta):
+    """Preserve the uploaded XLSX/XLSM workbook and write the generated rows into it.
+
+    CSV templates remain CSV. For Excel templates we keep all original sheets,
+    formatting, dropdowns and macros (for XLSM) and only populate the detected
+    seller-data row(s).
+    """
+    name = s(getattr(uploaded, "name", "")).lower()
+    raw = uploaded.getvalue()
+
+    if name.endswith(".csv"):
+        return dyn_df.to_csv(index=False).encode("utf-8-sig"), "csv"
+
+    if load_workbook is None:
+        raise RuntimeError("openpyxl is required to create the final Excel template.")
+
+    wb = load_workbook(
+        io.BytesIO(raw), data_only=False, keep_vba=name.endswith(".xlsm")
+    )
+    sheet = tmeta.get("sheet")
+    if not sheet or sheet not in wb.sheetnames:
+        raise ValueError("Could not locate the detected template sheet in the workbook.")
+
+    ws = wb[sheet]
+    header_row = int(tmeta.get("header_row", 1))
+    data_row = int(tmeta.get("data_row", header_row + 1))
+    raw_header = tmeta.get("raw_header", [])
+
+    # Build mapping by column position. This is safer than matching the
+    # cleaned field name back to the workbook because duplicate fields may
+    # exist in marketplace templates.
+    col_positions = {}
+    for idx, raw_field in enumerate(raw_header, start=1):
+        cleaned = _clean_template_field_name(raw_field)
+        if cleaned:
+            col_positions.setdefault(cleaned, []).append(idx)
+
+    # Clear only the seller data rows we are about to populate.
+    for r in range(data_row, data_row + max(len(dyn_df), 1)):
+        for c in range(1, ws.max_column + 1):
+            ws.cell(r, c).value = None
+
+    for row_offset, (_, record) in enumerate(dyn_df.iterrows()):
+        target_row = data_row + row_offset
+        for field in dyn_df.columns:
+            positions = col_positions.get(field, [])
+            if not positions:
+                # Handle de-duplicated columns such as "Recommended Browse Nodes_2".
+                base = re.sub(r"_\d+$", "", field)
+                positions = col_positions.get(base, [])
+            value = record.get(field, "")
+            for col_idx in positions[:1]:
+                ws.cell(target_row, col_idx).value = None if pd.isna(value) else s(value)
+
+    output = io.BytesIO()
+    wb.save(output)
+    ext = "xlsm" if name.endswith(".xlsm") else "xlsx"
+    return output.getvalue(), ext
+
 
 def _find_col(columns, aliases):
     normed={c:_norm_field(c) for c in columns}
@@ -260,7 +466,10 @@ def build_dynamic_upload(template_df, variants, base, facts, marketplace, catego
     for v in variants:
         row={c:"" for c in cols}
         for c in cols:
-            if _norm_field(c) in SYSTEM_FIELD_HINTS or "error status" in _norm_field(c) or "error message" in _norm_field(c):
+            if (_norm_field(c) in SYSTEM_FIELD_HINTS
+                    or "error status" in _norm_field(c)
+                    or "error message" in _norm_field(c)
+                    or _norm_field(c).startswith("column ")):
                 continue
             row[c]=_auto_value(c,v,base,facts,manual_defaults,marketplace,category,product_type)
         rows.append(row)
@@ -268,7 +477,7 @@ def build_dynamic_upload(template_df, variants, base, facts, marketplace, catego
     # Required fields are only blocked when template explicitly marks them; all other blanks are shown for review.
     for c in cols:
         n=_norm_field(c)
-        if n in SYSTEM_FIELD_HINTS or "error status" in n or "error message" in n: continue
+        if n in SYSTEM_FIELD_HINTS or "error status" in n or "error message" in n or n.startswith("column "): continue
         if df[c].astype(str).str.strip().eq("").any():
             manual.append(c)
     required=[c for c in cols if required_flags.get(c,False)]
@@ -1020,7 +1229,12 @@ elif mode == "🔁 Multi-Listing Generator":
                     tdf, tmeta = _read_template_bytes(template_file)
                     req_flags = _template_required_flags(template_file)
                     st.success(f"✅ Template loaded: {template_file.name} | {len(tdf.columns)} columns | {stored_marketplace}")
-                    st.caption(f"Detected source: {tmeta.get('kind')}" + (f" | Sheet: {tmeta.get('sheet')}" if tmeta.get('sheet') else ""))
+                    st.caption(
+                        f"Detected source: {tmeta.get('kind')}"
+                        + (f" | Sheet: {tmeta.get('sheet')}" if tmeta.get('sheet') else "")
+                        + (f" | Field row: {tmeta.get('header_row')}" if tmeta.get('header_row') else "")
+                        + (f" | Data row: {tmeta.get('data_row')}" if tmeta.get('data_row') else "")
+                    )
 
                     with st.expander("⚙️ Seller / Manual Details", expanded=True):
                         md={}
@@ -1068,7 +1282,12 @@ elif mode == "🔁 Multi-Listing Generator":
                                 dyn_df[c]=val
 
                     missing_required=[c for c in req_flags if req_flags.get(c) and dyn_df[c].astype(str).str.strip().eq("").any()]
-                    remaining_blanks=[c for c in dyn_df.columns if _norm_field(c) not in SYSTEM_FIELD_HINTS and "error status" not in _norm_field(c) and "error message" not in _norm_field(c) and dyn_df[c].astype(str).str.strip().eq("").any()]
+                    remaining_blanks=[c for c in dyn_df.columns
+                                      if _norm_field(c) not in SYSTEM_FIELD_HINTS
+                                      and "error status" not in _norm_field(c)
+                                      and "error message" not in _norm_field(c)
+                                      and not _norm_field(c).startswith("column ")
+                                      and dyn_df[c].astype(str).str.strip().eq("").any()]
                     if missing_required:
                         st.error("❌ Required fields still missing: " + ", ".join(missing_required))
                     elif remaining_blanks:
@@ -1080,8 +1299,40 @@ elif mode == "🔁 Multi-Listing Generator":
                     st.dataframe(dyn_df, use_container_width=True, height=360)
                     ready = not missing_required and not remaining_blanks
                     if ready:
-                        out_name=f"PureVastra_{stored_marketplace.replace(' ','_')}_{stored_category.replace(' ','_')}_Prefilled.csv"
-                        st.download_button("📥 Download Final Prefilled Upload CSV", dyn_df.to_csv(index=False).encode("utf-8-sig"), out_name, "text/csv", key="download_dynamic_upload")
+                        try:
+                            final_bytes, final_ext = _build_prefilled_template_bytes(template_file, dyn_df, tmeta)
+                            base_name = f"PureVastra_{stored_marketplace.replace(' ','_')}_{stored_category.replace(' ','_')}_Prefilled"
+                            if final_ext == "xlsm":
+                                final_name = base_name + ".xlsm"
+                                final_mime = "application/vnd.ms-excel.sheet.macroEnabled.12"
+                            elif final_ext == "xlsx":
+                                final_name = base_name + ".xlsx"
+                                final_mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                            else:
+                                final_name = base_name + ".csv"
+                                final_mime = "text/csv"
+
+                            st.success("✅ Final marketplace upload template is ready.")
+                            st.download_button(
+                                "⬇️ Download Final Prefilled Upload Template",
+                                final_bytes,
+                                final_name,
+                                final_mime,
+                                key="download_dynamic_upload",
+                            )
+
+                            # CSV companion is useful for inspection/debugging,
+                            # while the primary download preserves the uploaded
+                            # Excel template structure.
+                            st.download_button(
+                                "📥 Download Prefilled CSV Preview",
+                                dyn_df.to_csv(index=False).encode("utf-8-sig"),
+                                base_name + ".csv",
+                                "text/csv",
+                                key="download_dynamic_upload_csv_preview",
+                            )
+                        except Exception as export_error:
+                            st.error(f"Final template export error: {export_error}")
                     else:
                         st.info("Final download tabhi enable hoga jab required/remaining fields complete ho jayen. System-use fields ko intentionally blank rakha ja sakta hai.")
                 except Exception as e:
