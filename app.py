@@ -29,7 +29,7 @@ except Exception:
     PdfReader = PdfWriter = RectangleObject = None
 
 st.set_page_config(
-    page_title="Pure Vastra Seller Intelligence Suite V4",
+    page_title="Pure Vastra Seller Intelligence Suite V4.11",
     page_icon="🛍️",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -894,10 +894,214 @@ def business_health(df):
     preferred = ["ASIN", "SKU", "Title", "Sessions", "Orders", "Conversion", "Sales", "Diagnosis"]
     return out[[c for c in preferred if c in out.columns]]
 
+
+# ============================================================
+# V4.11 PRODUCT FACT ANALYSIS + KEYWORD CONTROL
+# ============================================================
+PRODUCT_FACT_FIELDS = [
+    ("product_type", "Product Type"),
+    ("brand", "Brand"),
+    ("primary_color", "Primary Color"),
+    ("secondary_color", "Secondary Color"),
+    ("fabric", "Fabric"),
+    ("pattern", "Pattern"),
+    ("print_type", "Print Type"),
+    ("work", "Work / Ornamentation"),
+    ("border", "Border"),
+    ("pallu", "Pallu Details"),
+    ("blouse", "Blouse / Included Components"),
+    ("saree_length", "Saree Length"),
+    ("blouse_length", "Blouse Length"),
+    ("occasion", "Occasion"),
+    ("country_of_origin", "Country of Origin"),
+    ("transparency", "Transparency"),
+    ("loom_type", "Loom Type"),
+]
+
+def _product_fact_prompt():
+    return """
+Analyze the uploaded saree/product images and return JSON ONLY.
+
+Goal: identify only visually supported product facts. Do NOT guess exact
+fabric composition, exact measurements, GST, HSN, SKU, price, certification,
+brand ownership, or any fact that cannot be established from the image.
+
+For every field return:
+{
+  "value": "...",
+  "confidence": "HIGH|MEDIUM|LOW",
+  "evidence": "short visible reason",
+  "needs_verification": true|false
+}
+
+Fields:
+product_type, brand, primary_color, secondary_color, fabric, pattern,
+print_type, work, border, pallu, blouse, saree_length, blouse_length,
+occasion, country_of_origin, transparency, loom_type.
+
+Rules:
+- If a field cannot be reliably detected, value must be "Not detected".
+- Do not convert visual appearance into a certain fabric claim.
+- For color, use practical marketplace color wording and mention secondary
+  colors when visible.
+- Distinguish print/pattern/work when possible.
+- If mirror work is visibly present, say mirror work; do not call it
+  embroidery unless visible.
+- If blouse piece is visible, say "Included/Visible blouse piece" rather
+  than inventing its length.
+- Never invent measurements.
+"""
+
+def analyze_product_images(images):
+    """Gemini vision analysis for a locked, seller-verifiable product fact card."""
+    if not images:
+        raise ValueError("At least one product image is required.")
+    payload = [_product_fact_prompt()] + images[:6]
+    resp = ai_generate(payload)
+    data = safe_json(resp.text)
+    if not isinstance(data, dict):
+        raise ValueError("AI fact analysis returned invalid JSON.")
+    normalized = {}
+    for key, label in PRODUCT_FACT_FIELDS:
+        item = data.get(key, {})
+        if not isinstance(item, dict):
+            item = {"value": s(item), "confidence": "LOW",
+                    "evidence": "", "needs_verification": True}
+        value = s(item.get("value")) or "Not detected"
+        normalized[key] = {
+            "label": label,
+            "value": value,
+            "confidence": s(item.get("confidence")).upper() or "LOW",
+            "evidence": s(item.get("evidence")),
+            "needs_verification": bool(item.get("needs_verification", True)),
+        }
+    return normalized
+
+def facts_to_text(fact_card, overrides=None):
+    """Convert the fixed fact card into the locked source-of-truth text."""
+    overrides = overrides or {}
+    lines = []
+    for key, label in PRODUCT_FACT_FIELDS:
+        item = fact_card.get(key, {})
+        value = s(overrides.get(key, item.get("value", "")))
+        if value:
+            lines.append(f"{label}: {value}")
+    return "\n".join(lines)
+
+def fact_card_has_unverified(fact_card):
+    return any(
+        item.get("needs_verification", True) or
+        item.get("confidence", "LOW") == "LOW" or
+        item.get("value", "Not detected") == "Not detected"
+        for item in fact_card.values()
+    )
+
+def keyword_list(value):
+    seen, out = set(), []
+    for item in re.split(r"[,;\n]+", s(value)):
+        k = norm(item)
+        if not k:
+            continue
+        key = k.lower()
+        if key not in seen:
+            seen.add(key)
+            out.append(k)
+    return out
+
+def keyword_coverage(target_keywords, listing_parts):
+    kws = keyword_list(target_keywords)
+    corpus = " ".join(s(x) for x in listing_parts).lower()
+    rows = []
+    for kw in kws:
+        rows.append({
+            "Target Keyword": kw,
+            "Used": kw.lower() in corpus,
+            "Exact occurrences": corpus.count(kw.lower()),
+        })
+    return pd.DataFrame(rows)
+
+def build_target_keyword_prompt(marketplace, facts, supplied_keywords):
+    return f"""
+Create a keyword research suggestion list for a {marketplace} saree listing.
+
+VERIFIED PRODUCT FACTS:
+{facts}
+
+SELLER-SUPPLIED CURRENT/TARGET KEYWORDS:
+{supplied_keywords or "None"}
+
+Return JSON only:
+{{
+  "approved_keywords": [],
+  "optional_keywords": [],
+  "rejected_keywords": [],
+  "notes": []
+}}
+
+Rules:
+- Never invent search volume, ranking position, search volume numbers, or
+  marketplace-private data.
+- Never suggest a keyword that contradicts the verified facts.
+- Prefer commercially relevant phrases that accurately describe this exact
+  product.
+- Treat seller-supplied keywords as higher priority, subject to factual
+  relevance.
+- This is keyword research/suggestion, not a ranking guarantee.
+"""
+
+def generate_listing_from_locked_facts(marketplace, product_name, category,
+                                       product_type, facts, target_keywords,
+                                       current_content=""):
+    p = MARKETPLACE[marketplace]
+    prompt = f"""
+Create ONE marketplace-ready factual listing for {marketplace}. Return JSON ONLY.
+
+PRODUCT:
+{product_name}
+
+CATEGORY:
+{category}
+
+PRODUCT TYPE:
+{product_type}
+
+LOCKED VERIFIED PRODUCT FACTS — THESE ARE THE ONLY PRODUCT FACTS YOU MAY USE:
+{facts}
+
+TARGET KEYWORDS — USE THESE WHEN RELEVANT AND NATURAL:
+{target_keywords}
+
+CURRENT CONTENT (reference only; do not copy unsupported claims):
+{current_content}
+
+Rules:
+1. Do not invent or change any locked product fact.
+2. Use target keywords naturally in the title, highlights/bullets,
+   description and backend/search keywords where appropriate.
+3. Do not keyword-stuff or repeat a phrase unnaturally.
+4. Do not add a keyword if it conflicts with the product facts.
+5. Do not use unsupported superlatives or ranking claims.
+6. Do not claim fabric, measurements, certifications or work that is not
+   explicitly present in the locked facts.
+7. Amazon India current Item Name limit: <= {p["title_max"]} characters.
+8. Amazon India Item Highlights target: <= {p["highlight_max"]} characters.
+9. Return keyword_usage showing which target keywords were used and where.
+10. Return verification_required for anything still requiring seller review.
+
+JSON keys:
+title, item_highlights, bullets, description, backend_keywords,
+keyword_usage, verification_required, publish_checklist
+"""
+    resp = ai_generate([prompt])
+    data = safe_json(resp.text)
+    if not isinstance(data, dict):
+        raise ValueError("AI listing generation returned invalid JSON.")
+    return data
+
 # ============================================================
 # UI
 # ============================================================
-st.sidebar.title("🛍️ Pure Vastra Seller Suite V4")
+st.sidebar.title("🛍️ Pure Vastra Seller Suite V4.11")
 st.sidebar.caption("New Listing • Multi-Listing • Bulk • Audit • Profit • Labels • Health")
 
 st.sidebar.markdown("### Gemini AI")
@@ -946,77 +1150,233 @@ def _template_bytes(filename):
     return None
 
 if mode == "🆕 New Single Listing":
-    st.title("🆕 New Single Listing Builder")
-    st.info("Verified-facts-first workflow. AI can rewrite content, but it cannot invent product specifications.")
+    st.title("🆕 New Single Listing — Product Facts + Keyword Engine")
+    st.info("Workflow: Image → AI Product Analysis → Fixed Verified Facts → Lock → Target Keywords → Listing.")
 
-    marketplace = st.selectbox("Marketplace", list(MARKETPLACE))
+    marketplace = st.selectbox("Marketplace", list(MARKETPLACE), key="single_marketplace")
     c1, c2 = st.columns(2)
     with c1:
-        product_name = st.text_input("Product / Base Name")
-        category = st.text_input("Category / Browse Path")
-        product_type = st.text_input("Product Type / Item Type Keyword")
-        target_customer = st.text_input("Target Customer / Use Case")
+        product_name = st.text_input("Product / Base Name", key="single_product_name")
+        category = st.text_input("Category / Browse Path", value="Sarees", key="single_category")
+        product_type = st.text_input("Product Type / Item Type Keyword", value="Saree", key="single_product_type")
     with c2:
-        target_keywords = st.text_area("Target Keywords (comma separated)")
-        facts = st.text_area("VERIFIED PRODUCT FACTS (one per line)", height=180,
-                              placeholder="Fabric: Linen Cotton\nColour: Baby Pink\nPattern: Digital Floral Print\nWork: Mirror Work\nIncluded Components: Blouse Piece")
-    imgs = st.file_uploader("Product Images (up to 6)", type=["jpg","jpeg","png"], accept_multiple_files=True, key="new_imgs")
+        current_content = st.text_area(
+            "Current Listing Content (optional)",
+            height=110,
+            key="single_current_content",
+            placeholder="Paste existing title/bullets/description if you want the AI to improve it."
+        )
 
+    imgs = st.file_uploader(
+        "📸 Upload Saree Images (1–6)",
+        type=["jpg", "jpeg", "png", "webp"],
+        accept_multiple_files=True,
+        key="new_imgs_v411"
+    )
+
+    opened_imgs = []
     if imgs:
         imgs = imgs[:6]
         cols = st.columns(min(6, len(imgs)))
         for i, im in enumerate(imgs):
-            with cols[i]:
-                st.image(im, caption=f"Image {i+1}", use_container_width=True)
+            try:
+                im.seek(0)
+                pil = Image.open(im).convert("RGB")
+                opened_imgs.append(pil)
+                with cols[i]:
+                    st.image(pil, caption=f"Image {i+1}", use_container_width=True)
+            except Exception:
+                st.warning(f"Image {i+1} could not be read.")
 
-    if st.button("🚀 Generate New Listing", type="primary"):
-        if not product_name or not facts:
-            st.warning("Product name aur verified facts required hain.")
+    if "single_fact_card" not in st.session_state:
+        st.session_state.single_fact_card = {}
+    if "single_fact_locked" not in st.session_state:
+        st.session_state.single_fact_locked = False
+
+    st.markdown("---")
+    st.subheader("🔎 Step 1 — AI Product Analysis")
+    st.caption("AI image se visible facts identify karega. Exact fabric/measurement jaise facts guess nahi honge.")
+
+    if st.button("🔎 Analyze Saree Image", type="secondary", key="analyze_saree_facts"):
+        if not opened_imgs:
+            st.warning("Pehle kam se kam 1 saree image upload karein.")
+        elif not api_key() or genai is None:
+            st.warning("Sidebar me Gemini API Key configure karein.")
         else:
-            with st.spinner("Generating marketplace-ready draft..."):
-                data, err = None, None
+            try:
+                with st.spinner("Saree image analyze ho rahi hai..."):
+                    st.session_state.single_fact_card = analyze_product_images(opened_imgs)
+                    st.session_state.single_fact_locked = False
+                st.success("✅ Product facts detected. Ab har field verify/edit karein.")
+            except Exception as e:
+                st.error(f"Product analysis error: {e}")
+
+    fact_card = st.session_state.get("single_fact_card", {})
+    if fact_card:
+        st.subheader("📋 Step 2 — VERIFIED PRODUCT FACTS")
+        st.caption("Har field fixed hai. Aapko sirf VALUE verify/edit karni hai.")
+        overrides = {}
+        fact_rows = []
+        for key, label in PRODUCT_FACT_FIELDS:
+            item = fact_card.get(key, {})
+            confidence = s(item.get("confidence", "LOW"))
+            status = "✓ HIGH" if confidence == "HIGH" and not item.get("needs_verification", True) else (
+                "✓ MEDIUM" if confidence == "MEDIUM" and not item.get("needs_verification", True)
+                else "⚠ VERIFY"
+            )
+            col1, col2, col3 = st.columns([2.2, 4.2, 1.6])
+            with col1:
+                st.markdown(f"**{label}**")
+            with col2:
+                overrides[key] = st.text_input(
+                    label,
+                    value=s(item.get("value", "")),
+                    key=f"fact_value_{key}",
+                    label_visibility="collapsed",
+                    disabled=st.session_state.single_fact_locked,
+                )
+            with col3:
+                st.caption(status)
+            if item.get("evidence"):
+                st.caption(f"AI evidence: {item['evidence']}")
+
+        final_facts = facts_to_text(fact_card, overrides)
+
+        if not st.session_state.single_fact_locked:
+            if st.button("🔒 LOCK VERIFIED PRODUCT FACTS", type="primary", key="lock_single_facts"):
+                st.session_state.single_locked_facts = final_facts
+                st.session_state.single_fact_locked = True
+                st.success("🔒 Facts locked. Listing generation ab sirf locked facts use karegi.")
+        else:
+            st.success("🔒 VERIFIED PRODUCT FACTS LOCKED")
+            st.code(st.session_state.get("single_locked_facts", final_facts))
+
+        locked_facts = st.session_state.get("single_locked_facts", final_facts)
+
+        st.markdown("---")
+        st.subheader("🔑 Step 3 — TARGET KEYWORDS")
+        st.caption("Jo keywords yahan approved honge, listing engine unhe naturally use karega. Keyword stuffing nahi hoga.")
+        target_keywords = st.text_area(
+            "Target Keyword",
+            value=st.session_state.get("single_target_keywords", ""),
+            key="single_target_keywords_input",
+            height=120,
+            placeholder="linen cotton saree, digital print saree, warli saree, mirror work saree"
+        )
+        st.session_state.single_target_keywords = target_keywords
+
+        k1, k2 = st.columns(2)
+        with k1:
+            if st.button("🔍 Generate Keyword Suggestions", key="generate_keyword_suggestions"):
+                if not st.session_state.single_fact_locked:
+                    st.warning("Pehle Product Facts LOCK karein.")
+                elif not api_key() or genai is None:
+                    st.warning("Gemini API Key configure karein.")
+                else:
+                    try:
+                        with st.spinner("Relevant keyword suggestions prepare ho rahi hain..."):
+                            kd = safe_json(ai_generate([
+                                build_target_keyword_prompt(marketplace, locked_facts, target_keywords)
+                            ]).text)
+                        st.session_state.single_keyword_research = kd or {}
+                    except Exception as e:
+                        st.error(f"Keyword research error: {e}")
+        with k2:
+            st.caption("⚠️ Is tool me search-volume/ranking numbers invent nahi kiye jayenge. Live marketplace keyword API available ho to usse connect kiya ja sakta hai.")
+
+        kd = st.session_state.get("single_keyword_research", {})
+        if kd:
+            st.markdown("**Approved keyword suggestions**")
+            st.write(", ".join(kd.get("approved_keywords", [])) or "None")
+            st.markdown("**Optional**")
+            st.write(", ".join(kd.get("optional_keywords", [])) or "None")
+            st.markdown("**Rejected / fact conflict**")
+            st.write(", ".join(kd.get("rejected_keywords", [])) or "None")
+
+        st.markdown("---")
+        st.subheader("🚀 Step 4 — Generate Listing")
+        if st.button("🚀 GENERATE LISTING FROM LOCKED FACTS", type="primary", key="generate_locked_listing"):
+            if not st.session_state.single_fact_locked:
+                st.warning("Pehle VERIFIED PRODUCT FACTS ko LOCK karein.")
+            elif not product_name:
+                st.warning("Product / Base Name required hai.")
+            elif not target_keywords.strip():
+                st.warning("Target Keywords enter karein.")
+            elif not api_key() or genai is None:
+                st.warning("Gemini API Key configure karein.")
+            else:
                 try:
-                    data, err = generate = None, None
-                    prompt = f"""
-Create one new factual listing for {marketplace}. Return JSON only.
-Product: {product_name}
-Category: {category}
-Product type: {product_type}
-Target customer/use: {target_customer}
-Verified facts:
-{facts}
-Target keywords: {target_keywords}
-Rules: never invent facts, never claim ranking guarantees, avoid keyword stuffing and unsupported superlatives.
-For Amazon India Item Name <=75 chars and Item Highlights <=125 chars.
-JSON keys: title,item_highlights,bullets,description,backend_keywords,attribute_suggestions,verification_required,publish_checklist.
-"""
-                    payload = [prompt] + image_list(imgs)
-                    resp = ai_generate(payload)
-                    data = safe_json(resp.text)
-                    if not data:
-                        st.error("AI response JSON format mein nahi aaya. Raw response:")
-                        st.write(resp.text)
-                    else:
-                        st.success("Draft generated. Publish se pehle verification required fields check karein.")
-                        st.subheader("Title")
-                        st.code(s(data.get("title")))
-                        if marketplace == "Amazon India":
-                            st.subheader("Item Highlights")
-                            st.code(s(data.get("item_highlights")))
-                        st.subheader("Bullets")
-                        for x in data.get("bullets", []):
-                            st.write("•", x)
-                        st.subheader("Description")
-                        st.write(s(data.get("description")))
-                        st.subheader("Backend/Search Keywords")
-                        st.code(s(data.get("backend_keywords")))
-                        st.subheader("Verification Required")
-                        st.write(data.get("verification_required", []))
-                        st.subheader("Publish Checklist")
-                        st.write(data.get("publish_checklist", []))
-                        st.download_button("📥 Download JSON", json.dumps(data, ensure_ascii=False, indent=2), "new_listing.json", "application/json")
+                    with st.spinner("Locked facts + target keywords se listing generate ho rahi hai..."):
+                        data = generate_listing_from_locked_facts(
+                            marketplace, product_name, category, product_type,
+                            locked_facts, target_keywords, current_content
+                        )
+                    st.session_state.single_generated_listing = data
+                    st.success("✅ Listing generated.")
                 except Exception as e:
                     st.error(f"Generation error: {e}")
+
+        data = st.session_state.get("single_generated_listing")
+        if data:
+            st.subheader("📝 Generated Listing")
+            st.markdown("**Title / Item Name**")
+            st.code(s(data.get("title")))
+            st.caption(f"Title length: {len(s(data.get('title')))}/{MARKETPLACE[marketplace]['title_max']}")
+
+            if marketplace == "Amazon India":
+                st.markdown("**Item Highlights**")
+                st.code(s(data.get("item_highlights")))
+                st.caption(f"Highlights length: {len(s(data.get('item_highlights')))}/{MARKETPLACE[marketplace]['highlight_max']}")
+
+            st.markdown("**Bullets**")
+            for x in data.get("bullets", []):
+                st.write("•", x)
+
+            st.markdown("**Description**")
+            st.write(s(data.get("description")))
+
+            st.markdown("**Search / Backend Keywords**")
+            st.code(s(data.get("backend_keywords")))
+
+            coverage = keyword_coverage(
+                target_keywords,
+                [
+                    data.get("title", ""),
+                    data.get("item_highlights", ""),
+                    "\n".join(data.get("bullets", [])) if isinstance(data.get("bullets"), list) else data.get("bullets", ""),
+                    data.get("description", ""),
+                    data.get("backend_keywords", ""),
+                ]
+            )
+            st.subheader("🔑 Target Keyword Coverage")
+            if coverage.empty:
+                st.info("No target keywords.")
+            else:
+                st.dataframe(coverage, use_container_width=True)
+                missing = coverage.loc[~coverage["Used"], "Target Keyword"].tolist()
+                if missing:
+                    st.warning("Missing target keywords: " + ", ".join(missing))
+                else:
+                    st.success("✓ All target keywords are used at least once.")
+
+            st.markdown("**Verification Required**")
+            st.write(data.get("verification_required", []))
+            st.markdown("**Publish Checklist**")
+            st.write(data.get("publish_checklist", []))
+
+            export_data = {
+                **data,
+                "locked_verified_product_facts": locked_facts,
+                "target_keywords": keyword_list(target_keywords),
+                "keyword_coverage": coverage.to_dict(orient="records"),
+            }
+            st.download_button(
+                "📥 Download Listing JSON",
+                json.dumps(export_data, ensure_ascii=False, indent=2),
+                "purevastra_verified_listing.json",
+                "application/json",
+                key="download_verified_listing_json"
+            )
 
 # ============================================================
 # MULTI-LISTING GENERATOR
